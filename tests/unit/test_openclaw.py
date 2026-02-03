@@ -208,3 +208,37 @@ class TestOpenClawBackendContextManager:
 
         mock_client.aclose.assert_called_once()
         assert backend._client is None
+
+    async def test_close_acquires_lock(self) -> None:
+        backend = OpenClawBackend()
+        mock_client = AsyncMock()
+        backend._client = mock_client
+
+        # Track if close() properly acquires the lock
+        lock_acquired = False
+        original_lock = backend._client_lock
+
+        class TrackedLock:
+            async def __aenter__(self) -> None:
+                nonlocal lock_acquired
+                lock_acquired = True
+                await original_lock.__aenter__()
+
+            async def __aexit__(self, *args: object) -> None:
+                await original_lock.__aexit__(*args)
+
+        backend._client_lock = TrackedLock()  # type: ignore[assignment]
+        await backend.close()
+
+        assert lock_acquired, "close() should acquire the lock"
+
+    async def test_close_idempotent(self) -> None:
+        backend = OpenClawBackend()
+        mock_client = AsyncMock()
+        backend._client = mock_client
+
+        # Calling close twice should be safe
+        await backend.close()
+        await backend.close()
+
+        mock_client.aclose.assert_called_once()

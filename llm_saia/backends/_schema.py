@@ -69,7 +69,17 @@ _PRIMITIVE_TYPE_MAP: dict[type, str] = {
 
 
 def python_type_to_json_schema(python_type: type) -> dict[str, Any]:
-    """Convert Python type hints to JSON schema."""
+    """Convert Python type hints to JSON schema.
+
+    Supported types:
+        - Primitives: str, int, float, bool
+        - Collections: list[T], dict
+        - Special: Any, Optional[T], T | None
+
+    Note:
+        Nested dataclasses are not supported. If you need nested structures,
+        flatten them or use dict for the nested portion.
+    """
     # Handle Optional[T] / T | None
     unwrapped = _unwrap_optional(python_type)
     if unwrapped is not None:

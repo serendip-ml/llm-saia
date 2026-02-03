@@ -1,5 +1,7 @@
 """Tests for backend implementations using SAIA core types."""
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
 
 from llm_saia.backends._schema import (
@@ -7,6 +9,7 @@ from llm_saia.backends._schema import (
     parse_json_to_dataclass,
     python_type_to_json_schema,
 )
+from llm_saia.backends.anthropic import AnthropicBackend
 from llm_saia.core.types import Critique, VerifyResult
 
 pytestmark = pytest.mark.unit
@@ -87,3 +90,27 @@ class TestParseToolResult:
         assert result.counter_argument == "counter"
         assert result.weaknesses == ["w1", "w2"]
         assert result.strength == 0.7
+
+
+class TestAnthropicBackendContextManager:
+    """Test Anthropic backend context manager support."""
+
+    async def test_context_manager(self) -> None:
+        with patch("anthropic.AsyncAnthropic") as mock_anthropic:
+            mock_client = AsyncMock()
+            mock_anthropic.return_value = mock_client
+
+            async with AnthropicBackend(api_key="test-key") as backend:
+                assert backend._client is mock_client
+
+            mock_client.close.assert_called_once()
+
+    async def test_close(self) -> None:
+        with patch("anthropic.AsyncAnthropic") as mock_anthropic:
+            mock_client = AsyncMock()
+            mock_anthropic.return_value = mock_client
+
+            backend = AnthropicBackend(api_key="test-key")
+            await backend.close()
+
+            mock_client.close.assert_called_once()
