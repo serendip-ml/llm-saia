@@ -40,7 +40,7 @@ class AnthropicBackend(SAIABackend):
         block = response.content[0]
         if not isinstance(block, TextBlock):
             raise ValueError(f"Expected TextBlock, got {type(block)}")
-        return block.text
+        return str(block.text)
 
     async def complete_structured(self, prompt: str, schema: type[T]) -> T:
         """LLM completion with structured output using tool_use."""
