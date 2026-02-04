@@ -28,7 +28,7 @@ class OpenAIBackend(SAIABackend):
     OpenAI-compatible APIs.
 
     Environment variables:
-        LLM_BASE_URL: Base URL for API (default: https://api.openai.com/v1)
+        LLM_BASE_URL: Base URL for API (default: http://localhost:8000/v1)
         LLM_MODEL: Model name (default: gpt-4o-mini)
         OPENAI_API_KEY: API key (optional for local LLMs)
     """
@@ -60,6 +60,8 @@ class OpenAIBackend(SAIABackend):
     def _convert_message(self, msg: Message) -> dict[str, Any]:
         """Convert a single SAIA message to OpenAI format."""
         if msg.role == "tool_result":
+            if not msg.tool_call_id:
+                raise ValueError("tool_call_id is required for tool_result messages")
             return {
                 "role": "tool",
                 "tool_call_id": msg.tool_call_id,
@@ -118,6 +120,14 @@ class OpenAIBackend(SAIABackend):
 
         return request
 
+    def _parse_tool_arguments(self, args_str: str) -> dict[str, Any]:
+        """Parse tool arguments JSON, returning error dict on malformed input."""
+        try:
+            result: dict[str, Any] = json.loads(args_str)
+            return result
+        except json.JSONDecodeError:
+            return {"_error": "malformed_json", "_raw": args_str[:200]}
+
     def _parse_response(self, data: dict[str, Any]) -> AgentResponse:
         """Parse OpenAI API response into AgentResponse."""
         choice = data["choices"][0]
@@ -131,7 +141,7 @@ class OpenAIBackend(SAIABackend):
                     ToolCall(
                         id=tc["id"],
                         name=tc["function"]["name"],
-                        arguments=json.loads(tc["function"]["arguments"]),
+                        arguments=self._parse_tool_arguments(tc["function"]["arguments"]),
                     )
                 )
 

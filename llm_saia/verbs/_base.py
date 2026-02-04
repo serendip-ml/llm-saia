@@ -137,7 +137,10 @@ class _Verb(ABC):
                 system=self._config.system,
                 response_schema=json_schema,
             )
-            data = json.loads(response.content)
+            try:
+                data = json.loads(response.content)
+            except json.JSONDecodeError as e:
+                raise ValueError(f"LLM returned invalid JSON for structured output: {e}") from e
             result = parse_json_to_dataclass(data, schema)
             return content, result
         return content, None
@@ -168,7 +171,10 @@ class _Verb(ABC):
             system=self._config.system,
             response_schema=json_schema,
         )
-        data = json.loads(response.content)
+        try:
+            data = json.loads(response.content)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"LLM returned invalid JSON for structured output: {e}") from e
         return parse_json_to_dataclass(data, schema)
 
     @abstractmethod

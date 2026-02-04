@@ -68,7 +68,8 @@ class SAIABackend(ABC):
     A single chat() method handles all LLM interactions. SAIA handles
     structured output parsing, tool loop logic, and prompt construction.
 
-    Implementations handle HTTP communication and resource management.
+    Resource management (close(), context managers) is the responsibility
+    of implementations and their callers, not SAIA.
     """
 
     @abstractmethod
