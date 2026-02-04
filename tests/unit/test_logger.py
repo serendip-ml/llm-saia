@@ -17,6 +17,9 @@ class RecordingLogger:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, dict[str, Any] | None]] = []
 
+    def trace(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        self.calls.append(("trace", msg, extra))
+
     def debug(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         self.calls.append(("debug", msg, extra))
 
@@ -41,6 +44,7 @@ class TestSAIALogger:
     def test_null_logger_no_op(self) -> None:
         """NullLogger does nothing."""
         logger = NullLogger()
+        logger.trace("test")
         logger.debug("test")
         logger.info("test", extra={"key": "value"})
         logger.warning("test")

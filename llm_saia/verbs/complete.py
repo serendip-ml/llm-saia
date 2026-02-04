@@ -3,12 +3,14 @@
 import json
 import time
 from collections.abc import Awaitable, Callable
+from typing import Literal
 
 from llm_saia.core.types import (
     AgentResponse,
     Message,
     RunConfig,
     TaskResult,
+    ToolCall,
 )
 from llm_saia.verbs._base import VerbConfig, _Verb
 
@@ -54,8 +56,12 @@ class Complete(_Verb):
         self, task: str, response: AgentResponse, messages: list[Message], iteration: int
     ) -> TaskResult | None:
         """Check if task completed via terminal tool or confirmation."""
-        if result := self._check_terminal_tool(response, messages, iteration):
-            return result
+        terminal_result = self._check_terminal_tool(task, response, messages, iteration)
+        if terminal_result is False:
+            # Terminal tool detected but awaiting confirmation - continue loop
+            return None
+        if terminal_result is not None:
+            return terminal_result
         return await self._handle_response(task, response, messages, iteration)
 
     def _result_preview(self, result: TaskResult) -> str:
@@ -67,9 +73,15 @@ class Complete(_Verb):
         return ""
 
     def _check_terminal_tool(
-        self, response: AgentResponse, messages: list[Message], iteration: int
-    ) -> TaskResult | None:
-        """Check if terminal tool was called. Returns TaskResult if so."""
+        self, task: str, response: AgentResponse, messages: list[Message], iteration: int
+    ) -> TaskResult | Literal[False] | None:
+        """Check if terminal tool was called.
+
+        Returns:
+            TaskResult: Terminal tool confirmed, task complete
+            False: Terminal tool detected, confirmation injected, continue loop
+            None: No terminal tool, proceed with normal handling
+        """
         terminal_tool = self._config.terminal_tool
         if not terminal_tool or not response.tool_calls:
             return None
@@ -79,14 +91,57 @@ class Complete(_Verb):
             return None
 
         messages.append(self._to_message(response))
-        return TaskResult(
-            completed=True,
-            output=response.content,
-            iterations=iteration + 1,
-            history=messages,
-            terminal_data=terminal_call.arguments,
-            terminal_tool=terminal_tool,
+
+        # Check if this is a confirmed terminal call (called twice in a row)
+        if self._is_terminal_confirmed(messages, terminal_tool):
+            return TaskResult(
+                completed=True,
+                output=response.content,
+                iterations=iteration + 1,
+                history=messages,
+                terminal_data=terminal_call.arguments,
+                terminal_tool=terminal_tool,
+            )
+
+        # First terminal call - ask for confirmation
+        self._inject_terminal_confirmation(task, terminal_tool, terminal_call, messages)
+        return False
+
+    def _is_terminal_confirmed(self, messages: list[Message], terminal_tool: str) -> bool:
+        """Check if this is a second terminal tool call (confirmation)."""
+        # Look for a recent confirmation prompt in messages
+        confirm_marker = f"call `{terminal_tool}` again to confirm"
+        for msg in reversed(messages[:-1]):  # Exclude the message we just added
+            if msg.role == "user" and confirm_marker in msg.content:
+                return True
+            # Only look back to the previous user message
+            if msg.role == "user":
+                break
+        return False
+
+    def _inject_terminal_confirmation(
+        self, task: str, terminal_tool: str, terminal_call: ToolCall, messages: list[Message]
+    ) -> None:
+        """Inject confirmation prompt for terminal tool call."""
+        # Add tool result acknowledging the call
+        messages.append(
+            Message(
+                role="tool_result",
+                content="Received. Please confirm this is your final response.",
+                tool_call_id=terminal_call.id,
+            )
         )
+        # Add confirmation prompt
+        data_preview = json.dumps(terminal_call.arguments, indent=2)
+        prompt = (
+            f"You called `{terminal_tool}` to signal completion.\n\n"
+            f"**Original task:** {task}\n\n"
+            f"**Your response:**\n```json\n{data_preview}\n```\n\n"
+            f"Is this your final response to the task?\n"
+            f"- If YES, call `{terminal_tool}` again to confirm.\n"
+            f"- If NO, continue working using the available tools."
+        )
+        messages.append(Message(role="user", content=prompt))
 
     async def _run_iteration(
         self, messages: list[Message], config: RunConfig

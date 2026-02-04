@@ -97,14 +97,17 @@ class _Verb(ABC):
     ) -> None:
         """Log when loop limit is reached."""
         if self._lg:
+            elapsed_secs = time.monotonic() - start_time
             self._lg.warning(
                 "verb loop limit reached",
                 extra={
                     "verb": self.__class__.__name__,
                     "iterations": iteration,
                     "total_tokens": total_tokens,
-                    "elapsed_secs": int(time.monotonic() - start_time),
-                    "limit_type": self._get_limit_type(config, iteration, start_time, total_tokens),
+                    "elapsed_secs": int(elapsed_secs),
+                    "limit_type": self._get_limit_type(
+                        config, iteration, elapsed_secs, total_tokens
+                    ),
                 },
             )
 
@@ -183,12 +186,12 @@ class _Verb(ABC):
         return False
 
     def _get_limit_type(
-        self, config: RunConfig, iteration: int, start_time: float, total_tokens: int
+        self, config: RunConfig, iteration: int, elapsed_secs: float, total_tokens: int
     ) -> str:
         """Determine which limit caused the loop to stop."""
         if config.max_iterations > 0 and iteration >= config.max_iterations:
             return "max_iterations"
-        if config.timeout_secs > 0 and (time.monotonic() - start_time) >= config.timeout_secs:
+        if config.timeout_secs > 0 and elapsed_secs >= config.timeout_secs:
             return "timeout"
         if config.max_total_tokens > 0 and total_tokens >= config.max_total_tokens:
             return "max_tokens"

@@ -11,6 +11,10 @@ class SAIALogger(Protocol):
     No explicit inheritance required - just implement the methods.
     """
 
+    def trace(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        """Log at TRACE level (more verbose than DEBUG)."""
+        ...
+
     def debug(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """Log at DEBUG level."""
         ...
@@ -29,6 +33,10 @@ class NullLogger:
 
     Satisfies SAIALogger protocol without doing anything.
     """
+
+    def trace(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        """No-op."""
+        pass
 
     def debug(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """No-op."""
