@@ -2,7 +2,6 @@
 
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
 
 from llm_saia.core.types import (
     AgentResponse,
@@ -32,7 +31,7 @@ class Complete(_Verb):
         messages: list[Message] = [Message(role="user", content=task)]
         start_time, iteration, total_tokens, last_content = time.monotonic(), 0, 0, ""
 
-        while not self._should_stop_complete(config, iteration, start_time, total_tokens):
+        while not self._should_stop(config, iteration, start_time, total_tokens):
             response, tokens = await self._run_iteration(messages, config)
             total_tokens, last_content = total_tokens + tokens, response.content
             if on_iteration:
@@ -66,26 +65,6 @@ class Complete(_Verb):
 
         return await self._check_completion(task, response.content, messages, iteration)
 
-    def _should_stop_complete(
-        self, config: LoopConfig, iteration: int, start_time: float, total_tokens: int
-    ) -> bool:
-        """Check if complete loop should stop."""
-        if config.max_iterations > 0 and iteration >= config.max_iterations:
-            return True
-        if config.timeout_secs > 0 and (time.monotonic() - start_time) >= config.timeout_secs:
-            return True
-        if config.max_total_tokens > 0 and total_tokens >= config.max_total_tokens:
-            return True
-        return False
-
-    def _to_message(self, response: AgentResponse) -> Message:
-        """Convert AgentResponse to Message."""
-        return Message(
-            role="assistant",
-            content=response.content,
-            tool_calls=response.tool_calls if response.tool_calls else None,
-        )
-
     async def _check_completion(
         self, task: str, content: str, messages: list[Message], iteration: int
     ) -> TaskResult | None:
@@ -111,14 +90,3 @@ class Complete(_Verb):
         )
         messages.append(Message(role="user", content=wrap_up))
         return None
-
-    async def _execute_tools(self, tool_calls: Any, messages: list[Message]) -> None:
-        """Execute tool calls."""
-        if not self._config.executor:
-            return
-        for tc in tool_calls:
-            try:
-                result = await self._config.executor(tc.name, tc.arguments)
-            except Exception as e:
-                result = f"Error: {e}"
-            messages.append(Message(role="tool_result", content=str(result), tool_call_id=tc.id))

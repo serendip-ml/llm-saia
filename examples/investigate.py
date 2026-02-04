@@ -86,21 +86,20 @@ async def investigate_claim(saia: SAIA, claim: str) -> None:
 
 async def main() -> None:
     """Run the example."""
-    backend = AnthropicBackend()
+    async with AnthropicBackend() as backend:
+        # Create SAIA with custom loop config
+        saia = SAIA(
+            backend=backend,
+            loop=LoopConfig(max_iterations=3, max_call_tokens=4096),
+        )
 
-    # Create SAIA with custom loop config
-    saia = SAIA(
-        backend=backend,
-        loop=LoopConfig(max_iterations=3, max_call_tokens=4096),
-    )
+        print(f"Loop config: {saia.loop_config}")
 
-    print(f"Loop config: {saia.loop_config}")
+        claim = "Python is slower than C for all computational tasks"
+        await investigate_claim(saia, claim)
 
-    claim = "Python is slower than C for all computational tasks"
-    await investigate_claim(saia, claim)
-
-    results = saia.recall("investigation")
-    print(f"\nRecalled {len(results)} result(s) from memory")
+        results = saia.recall("investigation")
+        print(f"\nRecalled {len(results)} result(s) from memory")
 
 
 if __name__ == "__main__":

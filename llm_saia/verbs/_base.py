@@ -119,7 +119,9 @@ class _Verb(ABC):
     ) -> tuple[str, T | None]:
         """Finalize result, optionally parsing structured output."""
         if schema:
-            result = await self._backend.complete_structured(prompt, schema)
+            # Include gathered content so structured output has tool loop context
+            structured_prompt = f"{prompt}\n\nBased on the following information:\n{content}"
+            result = await self._backend.complete_structured(structured_prompt, schema)
             return content, result
         return content, None
 
