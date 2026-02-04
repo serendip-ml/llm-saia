@@ -1,6 +1,7 @@
 """SAIA: Framework-agnostic verb vocabulary for LLM agents."""
 
 from llm_saia.core.backend import SAIABackend
+from llm_saia.core.logger import NullLogger, SAIALogger
 from llm_saia.core.types import (
     AgentResponse,
     ChooseResult,
@@ -22,6 +23,9 @@ __all__ = [
     # Main class
     "SAIA",
     "SAIABackend",
+    # Logger
+    "NullLogger",
+    "SAIALogger",
     # Verb results
     "ChooseResult",
     "ClassifyResult",

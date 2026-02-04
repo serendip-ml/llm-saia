@@ -1,5 +1,6 @@
 """COMPLETE verb: Execute a task with tool calling and completion confirmation."""
 
+import json
 import time
 from collections.abc import Awaitable, Callable
 
@@ -29,20 +30,41 @@ class Complete(_Verb):
         config = self._config.run or DEFAULT_COMPLETE_RUN
         messages: list[Message] = [Message(role="user", content=task)]
         start_time, iteration, total_tokens, last_content = time.monotonic(), 0, 0, ""
+        self._log_loop_start(config)
 
         while not self._should_stop(config, iteration, start_time, total_tokens):
             response, tokens = await self._run_iteration(messages, config)
             total_tokens, last_content = total_tokens + tokens, response.content
+            self._log_response(response, iteration, total_tokens)
             if on_iteration:
                 await on_iteration(iteration, response)
 
-            if result := self._check_terminal_tool(response, messages, iteration):
-                return result
-            if result := await self._handle_response(task, response, messages, iteration):
+            result = await self._try_complete(task, response, messages, iteration)
+            if result:
+                self._log_loop_complete(
+                    iteration, start_time, total_tokens, self._result_preview(result)
+                )
                 return result
             iteration += 1
 
+        self._log_limit_reached(config, iteration, start_time, total_tokens)
         return TaskResult(False, last_content, iteration, messages)
+
+    async def _try_complete(
+        self, task: str, response: AgentResponse, messages: list[Message], iteration: int
+    ) -> TaskResult | None:
+        """Check if task completed via terminal tool or confirmation."""
+        if result := self._check_terminal_tool(response, messages, iteration):
+            return result
+        return await self._handle_response(task, response, messages, iteration)
+
+    def _result_preview(self, result: TaskResult) -> str:
+        """Get preview content from TaskResult for logging."""
+        if result.output:
+            return result.output
+        if result.terminal_data:
+            return json.dumps(result.terminal_data)
+        return ""
 
     def _check_terminal_tool(
         self, response: AgentResponse, messages: list[Message], iteration: int
@@ -91,23 +113,25 @@ class Complete(_Verb):
 
         return await self._check_completion(task, response.content, messages, iteration)
 
-    async def _check_completion(
-        self, task: str, content: str, messages: list[Message], iteration: int
-    ) -> TaskResult | None:
-        """Check if task is complete. Returns TaskResult if done, None to continue."""
-        # Use confirm verb for completion check with single-call config
-        # to prevent nested loops with separate histories
-        from llm_saia.verbs.confirm import Confirm
-
-        single_call_config = VerbConfig(
+    def _single_call_config(self) -> VerbConfig:
+        """Create config for single-call verbs (no tools/looping)."""
+        return VerbConfig(
             backend=self._config.backend,
-            tools=[],  # No tools = no loop
+            tools=[],
             executor=None,
             system=self._config.system,
             run=None,
             terminal_tool=None,
+            lg=self._config.lg,
         )
-        confirm = Confirm(single_call_config)
+
+    async def _check_completion(
+        self, task: str, content: str, messages: list[Message], iteration: int
+    ) -> TaskResult | None:
+        """Check if task is complete. Returns TaskResult if done, None to continue."""
+        from llm_saia.verbs.confirm import Confirm
+
+        confirm = Confirm(self._single_call_config())
         confirmation = await confirm(
             claim="the task is complete based on the agent's response",
             context=f"Task: {task}\n\nAgent's response: {content}",
@@ -118,7 +142,6 @@ class Complete(_Verb):
                 completed=True, output=content, iterations=iteration + 1, history=messages
             )
 
-        # Inject wrap-up prompt
         wrap_up = (
             f"The task is not yet complete. Reason: {confirmation.reason}\n"
             "Please continue working on the task or use the available tools."
