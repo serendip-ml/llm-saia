@@ -16,7 +16,7 @@ Usage:
 from __future__ import annotations
 
 import json
-from typing import Any, TypeVar
+from typing import Any, TypeVar, cast
 
 import httpx
 
@@ -135,7 +135,7 @@ class OpenAIBackend(SAIABackend):
             ToolCall(
                 id=tc["id"],
                 name=tc["function"]["name"],
-                arguments=json.loads(tc["function"]["arguments"]),
+                arguments=self._parse_tool_arguments(tc["function"]["arguments"]),
             )
             for tc in message.get("tool_calls", [])
         ]
@@ -147,6 +147,13 @@ class OpenAIBackend(SAIABackend):
             input_tokens=usage.get("prompt_tokens", 0),
             output_tokens=usage.get("completion_tokens", 0),
         )
+
+    def _parse_tool_arguments(self, args_str: str) -> dict[str, Any]:
+        """Parse tool arguments JSON, returning error dict on malformed input."""
+        try:
+            return cast(dict[str, Any], json.loads(args_str))
+        except json.JSONDecodeError:
+            return {"_error": "malformed_json", "_raw": args_str[:200]}
 
     def _convert_messages(
         self, messages: list[Message], system: str | None
