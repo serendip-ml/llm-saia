@@ -17,7 +17,7 @@ from typing import Any
 
 from llm_saia import SAIA
 from llm_saia.backends.anthropic import AnthropicBackend
-from llm_saia.core.types import Critique, VerifyResult
+from llm_saia.core.types import Critique, LoopConfig, VerifyResult
 
 
 async def gather_evidence(saia: SAIA, claim: str) -> str:
@@ -86,14 +86,20 @@ async def investigate_claim(saia: SAIA, claim: str) -> None:
 
 async def main() -> None:
     """Run the example."""
-    backend = AnthropicBackend()
-    saia = SAIA(backend=backend)
-    claim = "Python is slower than C for all computational tasks"
+    async with AnthropicBackend() as backend:
+        # Create SAIA with custom loop config
+        saia = SAIA(
+            backend=backend,
+            loop=LoopConfig(max_iterations=3, max_call_tokens=4096),
+        )
 
-    await investigate_claim(saia, claim)
+        print(f"Loop config: {saia.loop_config}")
 
-    results = saia.recall("investigation")
-    print(f"\nRecalled {len(results)} result(s) from memory")
+        claim = "Python is slower than C for all computational tasks"
+        await investigate_claim(saia, claim)
+
+        results = saia.recall("investigation")
+        print(f"\nRecalled {len(results)} result(s) from memory")
 
 
 if __name__ == "__main__":
