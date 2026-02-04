@@ -174,9 +174,11 @@ class AnthropicBackend(SAIABackend):
 
     def _convert_tool_result(self, msg: Message) -> MessageParam:
         """Convert tool result to Anthropic format."""
+        if not msg.tool_call_id:
+            raise ValueError("tool_call_id is required for tool_result messages")
         tool_result: ToolResultBlockParam = {
             "type": "tool_result",
-            "tool_use_id": msg.tool_call_id or "",
+            "tool_use_id": msg.tool_call_id,
             "content": msg.content,
         }
         return {"role": "user", "content": [tool_result]}

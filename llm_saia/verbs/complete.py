@@ -27,7 +27,7 @@ class Complete(_Verb):
         if not self._has_tools():
             raise ValueError("Complete requires tools and executor to be configured.")
 
-        config = loop or DEFAULT_COMPLETE_LOOP
+        config = loop or self._config.loop or DEFAULT_COMPLETE_LOOP
         messages: list[Message] = [Message(role="user", content=task)]
         start_time, iteration, total_tokens, last_content = time.monotonic(), 0, 0, ""
 
@@ -47,10 +47,17 @@ class Complete(_Verb):
         self, messages: list[Message], config: LoopConfig
     ) -> tuple[AgentResponse, int]:
         """Run one LLM iteration and return response with token count."""
-        max_tokens = config.max_call_tokens if config.max_call_tokens > 0 else 4096
-        response = await self._backend.complete_with_tools(
-            messages, self._config.tools, self._config.system, max_tokens=max_tokens
-        )
+        if config.max_call_tokens > 0:
+            response = await self._backend.complete_with_tools(
+                messages,
+                self._config.tools,
+                self._config.system,
+                max_tokens=config.max_call_tokens,
+            )
+        else:
+            response = await self._backend.complete_with_tools(
+                messages, self._config.tools, self._config.system
+            )
         return response, response.input_tokens + response.output_tokens
 
     async def _handle_response(

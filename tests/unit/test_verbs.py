@@ -83,6 +83,14 @@ class TestConstrain:
         assert "no speculation" in mock_backend.last_prompt
         assert "Original text" in mock_backend.last_prompt
 
+    async def test_constrain_empty_rules_returns_unchanged(self, mock_backend: MockBackend) -> None:
+        constrain = Constrain(make_config(mock_backend))
+        result = await constrain("Original text", [])
+
+        assert result == "Original text"
+        # Backend should not be called for empty rules
+        assert mock_backend.last_prompt == ""
+
 
 class TestClassify:
     async def test_classify_returns_result(self, mock_backend: MockBackend) -> None:

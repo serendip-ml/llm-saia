@@ -67,10 +67,17 @@ class _Verb(ABC):
         total_tokens = 0
 
         while not self._should_stop(config, iteration, start_time, total_tokens):
-            max_tokens = config.max_call_tokens if config.max_call_tokens > 0 else 4096
-            response = await self._backend.complete_with_tools(
-                messages, self._config.tools, self._config.system, max_tokens=max_tokens
-            )
+            if config.max_call_tokens > 0:
+                response = await self._backend.complete_with_tools(
+                    messages,
+                    self._config.tools,
+                    self._config.system,
+                    max_tokens=config.max_call_tokens,
+                )
+            else:
+                response = await self._backend.complete_with_tools(
+                    messages, self._config.tools, self._config.system
+                )
             total_tokens += response.input_tokens + response.output_tokens
             messages.append(self._to_message(response))
 
