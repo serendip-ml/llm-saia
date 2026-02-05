@@ -589,7 +589,7 @@ class TestTask:
         saia = make_saia(
             mock_backend,
             tools=sample_tools + [terminal_tool_def],
-            executor=lambda n, a: n,
+            executor=dummy_executor,
             terminal_tool="finish",
         )
 
@@ -644,7 +644,7 @@ class TestTask:
         config = Config(
             backend=mock_backend,
             tools=sample_tools + [terminal_tool_def],
-            executor=lambda n, a: n,
+            executor=dummy_executor,
             system=None,
             terminal=TerminalConfig(tool="finish", failure_values=("stuck", "failed")),
             run=RunConfig(max_retries=0),  # No failure retries
