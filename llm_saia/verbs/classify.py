@@ -1,10 +1,10 @@
 """CLASSIFY verb: Classify text into categories."""
 
 from llm_saia.core.types import ClassifyResult
-from llm_saia.verbs._base import _Verb
+from llm_saia.core.verb import Verb
 
 
-class Classify(_Verb):
+class Classify(Verb):
     """Classify text into one of the given categories."""
 
     async def __call__(
@@ -13,6 +13,7 @@ class Classify(_Verb):
         categories: list[str],
         criteria: str | None = None,
     ) -> ClassifyResult:
+        """Classify text into one of the specified categories."""
         cats = ", ".join(categories)
         prompt = f"Classify this text into one of: {cats}\n\nText: {text}"
         if criteria:

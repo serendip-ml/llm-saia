@@ -1,6 +1,7 @@
 """SAIA verb implementations."""
 
-from llm_saia.verbs._base import VerbConfig, _Verb
+from llm_saia.core.config import Config
+from llm_saia.core.verb import Verb
 from llm_saia.verbs.ask import Ask
 from llm_saia.verbs.choose import Choose
 from llm_saia.verbs.classify import Classify
@@ -19,8 +20,8 @@ from llm_saia.verbs.verify import Verify
 
 __all__ = [
     # Base
-    "VerbConfig",
-    "_Verb",
+    "Config",
+    "Verb",
     # Verb classes
     "Ask",
     "Choose",

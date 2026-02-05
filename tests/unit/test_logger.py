@@ -4,9 +4,9 @@ from typing import Any
 
 import pytest
 
-from llm_saia import SAIA, NullLogger, SAIALogger
+from llm_saia import Logger, NullLogger
 from llm_saia.core.types import AgentResponse, ToolCall, ToolDef
-from tests.unit.conftest import MockBackend
+from tests.unit.conftest import MockBackend, make_saia
 
 pytestmark = pytest.mark.unit
 
@@ -33,16 +33,16 @@ class RecordingLogger:
         self.calls.append(("error", msg, extra))
 
 
-class TestSAIALogger:
+class TestLogger:
     def test_protocol_satisfaction(self) -> None:
-        """RecordingLogger satisfies SAIALogger protocol."""
+        """RecordingLogger satisfies Logger protocol."""
         logger = RecordingLogger()
-        assert isinstance(logger, SAIALogger)
+        assert isinstance(logger, Logger)
 
     def test_null_logger_satisfies_protocol(self) -> None:
-        """NullLogger satisfies SAIALogger protocol."""
+        """NullLogger satisfies Logger protocol."""
         logger = NullLogger()
-        assert isinstance(logger, SAIALogger)
+        assert isinstance(logger, Logger)
 
     def test_null_logger_no_op(self) -> None:
         """NullLogger does nothing."""
@@ -59,24 +59,24 @@ class TestLoggerIntegration:
     def test_saia_accepts_logger(self, mock_backend: MockBackend) -> None:
         """SAIA accepts a logger parameter."""
         logger = RecordingLogger()
-        saia = SAIA(backend=mock_backend, lg=logger)
-        assert saia._lg is logger
+        saia = make_saia(mock_backend, lg=logger)
+        assert saia._config.lg is logger
 
     def test_saia_without_logger(self, mock_backend: MockBackend) -> None:
         """SAIA works without a logger."""
-        saia = SAIA(backend=mock_backend)
-        assert saia._lg is None
+        saia = make_saia(mock_backend)
+        assert saia._config.lg is None
 
     def test_logger_preserved_in_with_methods(self, mock_backend: MockBackend) -> None:
         """Logger is preserved through with_* methods."""
         logger = RecordingLogger()
-        saia = SAIA(backend=mock_backend, lg=logger)
+        saia = make_saia(mock_backend, lg=logger)
 
         saia2 = saia.with_max_iterations(5)
-        assert saia2._lg is logger
+        assert saia2._config.lg is logger
 
         saia3 = saia.with_single_call()
-        assert saia3._lg is logger
+        assert saia3._config.lg is logger
 
     async def test_logger_called_during_verb_with_tools(self, mock_backend: MockBackend) -> None:
         """Logger is called during verb execution when tools are configured."""
@@ -86,7 +86,7 @@ class TestLoggerIntegration:
         async def executor(name: str, args: dict[str, Any]) -> str:
             return "result"
 
-        saia = SAIA(backend=mock_backend, tools=tools, executor=executor, lg=logger)
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
 
         await saia.ask("artifact", "question")
 
@@ -103,7 +103,7 @@ class TestLoggerIntegration:
         async def executor(name: str, args: dict[str, Any]) -> str:
             return "result"
 
-        saia = SAIA(backend=mock_backend, tools=tools, executor=executor, lg=logger)
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
 
         # Queue a tool call followed by completion
         mock_backend.queue_response(
@@ -133,7 +133,7 @@ class TestLoggerIntegration:
         async def executor(name: str, args: dict[str, Any]) -> str:
             return "result"
 
-        saia = SAIA(backend=mock_backend, tools=tools, executor=executor, lg=logger)
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
 
         # Queue multiple tool calls that exceed max_iterations
         for _ in range(5):
@@ -164,7 +164,7 @@ class TestLoggerIntegration:
         async def executor(name: str, args: dict[str, Any]) -> str:
             raise ValueError("Tool failed!")
 
-        saia = SAIA(backend=mock_backend, tools=tools, executor=executor, lg=logger)
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
 
         mock_backend.queue_response(
             AgentResponse(
@@ -195,7 +195,7 @@ class TestLoggerIntegration:
         async def executor(name: str, args: dict[str, Any]) -> str:
             return "result"
 
-        saia = SAIA(backend=mock_backend, tools=tools, executor=executor, lg=logger)
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
 
         # Queue tool calls that exceed max_iterations (Complete has its own loop)
         for _ in range(5):
@@ -230,7 +230,7 @@ class TestLoggerIntegration:
         async def executor(name: str, args: dict[str, Any]) -> str:
             return "result"
 
-        saia = SAIA(backend=mock_backend, tools=tools, executor=executor, lg=logger)
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
 
         # Queue: tool call -> completion response -> confirm says done
         mock_backend.queue_response(
@@ -253,3 +253,124 @@ class TestLoggerIntegration:
         assert "llm response received" in messages
         # Should NOT have limit reached since it completed successfully
         assert "verb loop limit reached" not in messages
+
+    async def test_warns_when_tools_not_used_but_json_in_response(
+        self, mock_backend: MockBackend
+    ) -> None:
+        """Warns when LLM outputs tool-call JSON as text instead of using tool_calls."""
+        logger = RecordingLogger()
+        tools = [ToolDef(name="search", description="Search for info", parameters={})]
+
+        async def executor(name: str, args: dict[str, Any]) -> str:
+            return "result"
+
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
+
+        # LLM returns tool-call-like JSON in content instead of using tool_calls
+        fake_tool_json = '{"name": "search", "arguments": {"query": "test"}}'
+        mock_backend.queue_response(
+            AgentResponse(
+                content=f"I will search for that. {fake_tool_json}",
+                tool_calls=[],
+                stop_reason="end_turn",
+            )
+        )
+
+        await saia.instruct("search for something")
+
+        # Should have warning about tools not being used
+        warning_calls = [c for c in logger.calls if c[0] == "warning"]
+        assert len(warning_calls) > 0
+        warn_messages = [c[1] for c in warning_calls]
+        assert any("model may not support function calling" in msg for msg in warn_messages)
+
+    async def test_no_warning_when_tools_used_correctly(self, mock_backend: MockBackend) -> None:
+        """No warning when LLM uses tool_calls properly."""
+        logger = RecordingLogger()
+        tools = [ToolDef(name="search", description="Search for info", parameters={})]
+
+        async def executor(name: str, args: dict[str, Any]) -> str:
+            return "result"
+
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
+
+        # LLM properly uses tool_calls
+        mock_backend.queue_response(
+            AgentResponse(
+                content="Searching...",
+                tool_calls=[ToolCall(id="1", name="search", arguments={"query": "test"})],
+                stop_reason="tool_use",
+            )
+        )
+        mock_backend.queue_response(
+            AgentResponse(content="Found results", tool_calls=[], stop_reason="end_turn")
+        )
+
+        await saia.instruct("search for something")
+
+        # Should NOT have the function calling warning
+        warning_calls = [c for c in logger.calls if c[0] == "warning"]
+        warn_messages = [c[1] for c in warning_calls]
+        assert not any("model may not support function calling" in msg for msg in warn_messages)
+
+    async def test_warns_when_input_tokens_suspiciously_low(
+        self, mock_backend: MockBackend
+    ) -> None:
+        """Warns when input tokens suggest server ignored tool definitions."""
+        logger = RecordingLogger()
+        tools = [ToolDef(name="search", description="Search for info", parameters={})]
+
+        async def executor(name: str, args: dict[str, Any]) -> str:
+            return "result"
+
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
+
+        # Very low input tokens (10) vs expected minimum (50 per tool)
+        mock_backend.queue_response(
+            AgentResponse(
+                content="I don't have tools",
+                tool_calls=[],
+                stop_reason="end_turn",
+                input_tokens=10,  # Suspiciously low for 1 tool (expected >= 50)
+            )
+        )
+
+        await saia.instruct("search for something")
+
+        warning_calls = [c for c in logger.calls if c[0] == "warning"]
+        warn_messages = [c[1] for c in warning_calls]
+        assert any("input tokens suspiciously low" in msg for msg in warn_messages)
+
+    async def test_no_low_token_warning_when_tools_working(self, mock_backend: MockBackend) -> None:
+        """No low token warning when tool_calls are present (tools working)."""
+        logger = RecordingLogger()
+        tools = [ToolDef(name="search", description="Search for info", parameters={})]
+        executor_calls: list[str] = []
+
+        async def executor(name: str, args: dict[str, Any]) -> str:
+            executor_calls.append(name)
+            return "result"
+
+        saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
+
+        # Low input tokens but tools are working (tool_calls present)
+        mock_backend.queue_response(
+            AgentResponse(
+                content="",
+                tool_calls=[ToolCall(id="1", name="search", arguments={"query": "test"})],
+                stop_reason="tool_use",
+                input_tokens=10,  # Low, but tools work so no warning
+            )
+        )
+        mock_backend.queue_response(
+            AgentResponse(content="Found results", tool_calls=[], stop_reason="end_turn")
+        )
+
+        await saia.instruct("search for something")
+
+        # Verify tool was actually executed
+        assert executor_calls == ["search"], "Tool should have been executed"
+        # Should NOT have the low token warning since tools are working
+        warning_calls = [c for c in logger.calls if c[0] == "warning"]
+        warn_messages = [c[1] for c in warning_calls]
+        assert not any("input tokens suspiciously low" in msg for msg in warn_messages)

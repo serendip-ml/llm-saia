@@ -1,10 +1,10 @@
 """CHOOSE verb: Force a choice between options."""
 
 from llm_saia.core.types import ChooseResult
-from llm_saia.verbs._base import _Verb
+from llm_saia.core.verb import Verb
 
 
-class Choose(_Verb):
+class Choose(Verb):
     """Force a choice between given options."""
 
     async def __call__(
@@ -13,6 +13,7 @@ class Choose(_Verb):
         context: str | None = None,
         criteria: str | None = None,
     ) -> ChooseResult:
+        """Select one option from the given choices."""
         opts = "\n".join(f"- {o}" for o in options)
         prompt = f"Choose one of these options:\n{opts}"
         if context:

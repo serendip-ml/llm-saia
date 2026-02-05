@@ -5,20 +5,16 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Literal
 
-from llm_saia.core.types import (
-    AgentResponse,
-    Message,
-    RunConfig,
-    TaskResult,
-    ToolCall,
-)
-from llm_saia.verbs._base import VerbConfig, _Verb
+from llm_saia.core.backend import AgentResponse, Message, ToolCall
+from llm_saia.core.config import Config, RunConfig
+from llm_saia.core.types import TaskResult
+from llm_saia.core.verb import Verb
 
 # Default run config for complete (unlimited iterations)
 DEFAULT_COMPLETE_RUN = RunConfig(max_iterations=0)
 
 
-class Complete(_Verb):
+class Complete(Verb):
     """Execute a task with tool calling and completion confirmation."""
 
     async def __call__(
@@ -39,6 +35,7 @@ class Complete(_Verb):
             response, tokens = await self._run_iteration(messages, config)
             total_tokens, last_content = total_tokens + tokens, response.content
             self._log_response(response, iteration, total_tokens)
+            self._check_tool_support(response)
             if on_iteration:
                 await on_iteration(iteration, response)
 
@@ -171,9 +168,9 @@ class Complete(_Verb):
 
         return await self._check_completion(task, response.content, messages, iteration)
 
-    def _single_call_config(self) -> VerbConfig:
+    def _single_call_config(self) -> Config:
         """Create config for single-call verbs (no tools/looping)."""
-        return VerbConfig(
+        return Config(
             backend=self._config.backend,
             tools=[],
             executor=None,
@@ -181,6 +178,7 @@ class Complete(_Verb):
             run=None,
             terminal_tool=None,
             lg=self._config.lg,
+            warn_tool_support=self._config.warn_tool_support,
         )
 
     async def _check_completion(

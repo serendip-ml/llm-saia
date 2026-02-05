@@ -1,31 +1,48 @@
 """SAIA: Framework-agnostic verb vocabulary for LLM agents."""
 
-from llm_saia.core.backend import SAIABackend
-from llm_saia.core.logger import NullLogger, SAIALogger
+from llm_saia.builder import SAIABuilder
+from llm_saia.core.backend import AgentResponse, Backend, Message, ToolCall, ToolDef
+from llm_saia.core.config import Config, RunConfig
+from llm_saia.core.errors import (
+    BackendError,
+    ConfigurationError,
+    Error,
+    StructuredOutputError,
+    ToolExecutionError,
+    TruncatedResponseError,
+)
+from llm_saia.core.logger import Logger, NullLogger
 from llm_saia.core.types import (
-    AgentResponse,
     ChooseResult,
     ClassifyResult,
     ConfirmResult,
     Critique,
     Evidence,
-    Message,
-    RunConfig,
     TaskResult,
-    ToolCall,
-    ToolDef,
     VerbResult,
     VerifyResult,
 )
+from llm_saia.core.verb import Verb
 from llm_saia.saia import SAIA
 
 __all__ = [
     # Main class
     "SAIA",
-    "SAIABackend",
+    "SAIABuilder",
+    "Backend",
+    # Custom verbs
+    "Verb",
+    "Config",
+    # Errors
+    "Error",
+    "BackendError",
+    "ConfigurationError",
+    "StructuredOutputError",
+    "ToolExecutionError",
+    "TruncatedResponseError",
     # Logger
     "NullLogger",
-    "SAIALogger",
+    "Logger",
     # Verb results
     "ChooseResult",
     "ClassifyResult",

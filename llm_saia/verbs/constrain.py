@@ -1,12 +1,13 @@
 """CONSTRAIN verb: Enforce rules and boundaries on text."""
 
-from llm_saia.verbs._base import _Verb
+from llm_saia.core.verb import Verb
 
 
-class Constrain(_Verb):
+class Constrain(Verb):
     """Enforce rules and boundaries on text."""
 
     async def __call__(self, text: str, rules: list[str]) -> str:
+        """Rewrite text to comply with the specified rules."""
         if not rules:
             return text
         rules_str = "\n".join(f"- {r}" for r in rules)
