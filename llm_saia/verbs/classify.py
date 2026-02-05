@@ -13,6 +13,7 @@ class Classify(Verb):
         categories: list[str],
         criteria: str | None = None,
     ) -> ClassifyResult:
+        """Classify text into one of the specified categories."""
         cats = ", ".join(categories)
         prompt = f"Classify this text into one of: {cats}\n\nText: {text}"
         if criteria:

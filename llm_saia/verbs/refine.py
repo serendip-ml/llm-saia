@@ -9,6 +9,7 @@ class Refine(Verb):
     """Improve artifact based on feedback."""
 
     async def __call__(self, artifact: Any, feedback: str) -> str:
+        """Improve an artifact based on the provided feedback."""
         prompt = (
             f"Improve this artifact based on the feedback.\n\n"
             f"Artifact: {artifact}\n\nFeedback: {feedback}"

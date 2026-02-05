@@ -13,6 +13,7 @@ class Choose(Verb):
         context: str | None = None,
         criteria: str | None = None,
     ) -> ChooseResult:
+        """Select one option from the given choices."""
         opts = "\n".join(f"- {o}" for o in options)
         prompt = f"Choose one of these options:\n{opts}"
         if context:

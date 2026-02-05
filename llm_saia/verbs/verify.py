@@ -10,6 +10,7 @@ class Verify(Verb):
     """Check if artifact satisfies predicate."""
 
     async def __call__(self, artifact: Any, predicate: str) -> VerifyResult:
+        """Check whether an artifact satisfies a given predicate."""
         prompt = (
             f"Verify that this artifact satisfies the predicate.\n\n"
             f"Artifact: {artifact}\n\nPredicate: {predicate}"

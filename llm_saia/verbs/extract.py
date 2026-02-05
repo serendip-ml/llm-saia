@@ -16,6 +16,7 @@ class Extract(Verb):
         schema: type[T],
         instructions: str | None = None,
     ) -> T:
+        """Extract structured data from content according to the schema."""
         prompt = f"Extract the following information from this content:\n\n{content}"
         if instructions:
             prompt += f"\n\nExtraction guidance: {instructions}"

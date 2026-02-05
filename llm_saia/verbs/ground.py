@@ -10,6 +10,7 @@ class Ground(Verb):
     """Anchor artifact against sources for evidence."""
 
     async def __call__(self, artifact: Any, sources: list[Any]) -> list[Evidence]:
+        """Find evidence in sources that supports or refutes the artifact."""
         results: list[Evidence] = []
         for source in sources:
             prompt = (

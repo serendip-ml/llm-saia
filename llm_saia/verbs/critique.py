@@ -10,5 +10,6 @@ class Critique_(Verb):
     """Generate strongest counter-argument."""
 
     async def __call__(self, artifact: Any) -> Critique:
+        """Generate the strongest counter-argument to the artifact."""
         prompt = f"Generate the strongest counter-argument to this:\n\n{artifact}"
         return await self._complete_structured(prompt, Critique)
