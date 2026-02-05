@@ -1,12 +1,20 @@
 """COMPLETE verb: Execute a task with tool calling and completion confirmation."""
 
-import json
+from __future__ import annotations
+
 import time
 from collections.abc import Awaitable, Callable
-from typing import Literal
 
 from llm_saia.core.backend import AgentResponse, Message, ToolCall
-from llm_saia.core.config import Config, RunConfig
+from llm_saia.core.config import RunConfig
+from llm_saia.core.controller import (
+    Action,
+    ActionKind,
+    ControllerConfig,
+    DefaultController,
+    LoopController,
+    Observation,
+)
 from llm_saia.core.types import TaskResult
 from llm_saia.core.verb import Verb
 
@@ -21,132 +29,92 @@ class Complete(Verb):
         self,
         task: str,
         on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None = None,
+        controller: LoopController | None = None,
     ) -> TaskResult:
         """Execute a task using tools until completion or limit reached."""
         if not self._has_tools():
             raise ValueError("Complete requires tools and executor to be configured.")
 
-        config = self._config.run or DEFAULT_COMPLETE_RUN
+        ctrl = controller or self._default_controller()
+        ctrl.reset()
+
+        run_config = self._config.run or DEFAULT_COMPLETE_RUN
         messages: list[Message] = [Message(role="user", content=task)]
         start_time, iteration, total_tokens, last_content = time.monotonic(), 0, 0, ""
-        self._log_loop_start(config)
+        tool_names = [t.name for t in (self._config.tools or [])]
+        self._log_loop_start(run_config)
 
-        while not self._should_stop(config, iteration, start_time, total_tokens):
-            response, tokens = await self._run_iteration(messages, config)
-            total_tokens, last_content = total_tokens + tokens, response.content
-            self._log_response(response, iteration, total_tokens)
-            self._check_tool_support(response)
-            if on_iteration:
-                await on_iteration(iteration, response)
+        while not self._should_stop(run_config, iteration, start_time, total_tokens):
+            response, tokens = await self._run_iteration(messages, run_config)
+            total_tokens += tokens
+            last_content = response.content
 
-            result = await self._try_complete(task, response, messages, iteration)
+            result = await self._process_iteration(
+                response, messages, iteration, total_tokens, task, tool_names, ctrl, on_iteration
+            )
             if result:
-                self._log_loop_complete(
-                    iteration, start_time, total_tokens, self._result_preview(result)
-                )
+                self._log_loop_complete(iteration, start_time, total_tokens, result.output or "")
                 return result
             iteration += 1
 
-        self._log_limit_reached(config, iteration, start_time, total_tokens)
+        self._log_limit_reached(run_config, iteration, start_time, total_tokens)
         return TaskResult(False, last_content, iteration, messages)
 
-    async def _try_complete(
-        self, task: str, response: AgentResponse, messages: list[Message], iteration: int
+    async def _process_iteration(
+        self,
+        response: AgentResponse,
+        messages: list[Message],
+        iteration: int,
+        total_tokens: int,
+        task: str,
+        tool_names: list[str],
+        ctrl: LoopController,
+        on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None,
     ) -> TaskResult | None:
-        """Check if task completed via terminal tool or confirmation."""
-        terminal_result = self._check_terminal_tool(task, response, messages, iteration)
-        if terminal_result is False:
-            # Terminal tool detected but awaiting confirmation - continue loop
-            return None
-        if terminal_result is not None:
-            return terminal_result
-        return await self._handle_response(task, response, messages, iteration)
+        """Process a single iteration: log, callback, decide, execute."""
+        self._log_response(response, iteration, total_tokens)
+        self._check_tool_support(response)
 
-    def _result_preview(self, result: TaskResult) -> str:
-        """Get preview content from TaskResult for logging."""
-        if result.output:
-            return result.output
-        if result.terminal_data:
-            return self._safe_json_dumps(result.terminal_data)
-        return ""
+        if on_iteration:
+            await on_iteration(iteration, response)
 
-    def _safe_json_dumps(self, data: object, indent: int | None = None) -> str:
-        """Serialize data to JSON, falling back to str() for non-serializable objects."""
-        try:
-            return json.dumps(data, indent=indent)
-        except (TypeError, ValueError):
-            return str(data)
-
-    def _check_terminal_tool(
-        self, task: str, response: AgentResponse, messages: list[Message], iteration: int
-    ) -> TaskResult | Literal[False] | None:
-        """Check if terminal tool was called.
-
-        Returns:
-            TaskResult: Terminal tool confirmed, task complete
-            False: Terminal tool detected, confirmation injected, continue loop
-            None: No terminal tool, proceed with normal handling
-        """
-        terminal_tool = self._config.terminal_tool
-        if not terminal_tool or not response.tool_calls:
-            return None
-
-        terminal_call = next((tc for tc in response.tool_calls if tc.name == terminal_tool), None)
-        if not terminal_call:
-            return None
-
-        messages.append(self._to_message(response))
-
-        # Check if this is a confirmed terminal call (called twice in a row)
-        if self._is_terminal_confirmed(messages, terminal_tool):
-            return TaskResult(
-                completed=True,
-                output=response.content,
-                iterations=iteration + 1,
-                history=messages,
-                terminal_data=terminal_call.arguments,
-                terminal_tool=terminal_tool,
-            )
-
-        # First terminal call - ask for confirmation
-        self._inject_terminal_confirmation(task, terminal_tool, terminal_call, messages)
-        return False
-
-    def _is_terminal_confirmed(self, messages: list[Message], terminal_tool: str) -> bool:
-        """Check if this is a second terminal tool call (confirmation)."""
-        # Look for a recent confirmation prompt in messages
-        confirm_marker = f"call `{terminal_tool}` again to confirm"
-        for msg in reversed(messages[:-1]):  # Exclude the message we just added
-            if msg.role == "user" and confirm_marker in msg.content:
-                return True
-            # Only look back to the previous user message
-            if msg.role == "user":
-                break
-        return False
-
-    def _inject_terminal_confirmation(
-        self, task: str, terminal_tool: str, terminal_call: ToolCall, messages: list[Message]
-    ) -> None:
-        """Inject confirmation prompt for terminal tool call."""
-        # Add tool result acknowledging the call
-        messages.append(
-            Message(
-                role="tool_result",
-                content="Received. Please confirm this is your final response.",
-                tool_call_id=terminal_call.id,
-            )
+        terminal = self._config.terminal
+        obs = Observation(
+            response=response,
+            messages=messages,
+            iteration=iteration,
+            task=task,
+            tool_names=tool_names,
+            terminal_tool=terminal.tool if terminal else None,
         )
-        # Add confirmation prompt
-        data_preview = self._safe_json_dumps(terminal_call.arguments, indent=2)
-        prompt = (
-            f"You called `{terminal_tool}` to signal completion.\n\n"
-            f"**Original task:** {task}\n\n"
-            f"**Your response:**\n```json\n{data_preview}\n```\n\n"
-            f"Is this your final response to the task?\n"
-            f"- If YES, call `{terminal_tool}` again to confirm.\n"
-            f"- If NO, continue working using the available tools."
+        action = await ctrl.decide(obs)
+        self._log_action(action)
+
+        return await self._execute_action(action, response, messages, iteration)
+
+    def _default_controller(self) -> DefaultController:
+        """Create default controller with config from this verb."""
+        from llm_saia.core.config import Config
+
+        # Controller needs a config for classifier calls (no tools)
+        llm_config = Config(
+            backend=self._config.backend,
+            tools=[],
+            executor=None,
+            system=self._config.system,
+            run=None,
+            terminal=None,
+            lg=self._config.lg,
+            warn_tool_support=self._config.warn_tool_support,
         )
-        messages.append(Message(role="user", content=prompt))
+        run = self._config.run or DEFAULT_COMPLETE_RUN
+        return DefaultController(
+            config=ControllerConfig(
+                llm_config=llm_config,
+                terminal=self._config.terminal,
+                max_failure_retries=run.max_retries,
+            ),
+        )
 
     async def _run_iteration(
         self, messages: list[Message], config: RunConfig
@@ -156,51 +124,128 @@ class Complete(Verb):
         response = await self._chat(messages, max_tokens)
         return response, response.input_tokens + response.output_tokens
 
-    async def _handle_response(
-        self, task: str, response: AgentResponse, messages: list[Message], iteration: int
+    async def _execute_action(
+        self,
+        action: Action,
+        response: AgentResponse,
+        messages: list[Message],
+        iteration: int,
     ) -> TaskResult | None:
-        """Handle LLM response - execute tools or check completion."""
+        """Execute the action decided by the controller."""
+        match action.kind:
+            case ActionKind.EXECUTE_TOOLS:
+                await self._execute_tool_action(action, response, messages)
+                return None
+
+            case ActionKind.INSTRUCT:
+                self._add_response_if_needed(messages, response)
+                self._ack_response_tools(response, messages)
+                if action.message:
+                    messages.append(Message(role="user", content=action.message))
+                return None
+
+            case ActionKind.SKIP:
+                self._add_response_if_needed(messages, response)
+                self._ack_response_tools(response, messages)
+                messages.append(Message(role="user", content="Continue."))
+                return None
+
+            case ActionKind.COMPLETE:
+                self._add_response_if_needed(messages, response)
+                return self._make_result(True, action, response, messages, iteration)
+
+            case ActionKind.FAIL:
+                self._add_response_if_needed(messages, response)
+                return self._make_result(False, action, response, messages, iteration)
+
+        return None
+
+    async def _execute_tool_action(
+        self, action: Action, response: AgentResponse, messages: list[Message]
+    ) -> None:
+        """Handle EXECUTE_TOOLS action: add response, ack skipped, execute."""
+        messages.append(self._to_message(response))
+        if response.tool_calls:
+            calls = self._filter_tool_calls(response.tool_calls, action.tool_ids_to_execute)
+            self._ack_skipped_tools(response.tool_calls, action.tool_ids_to_execute, messages)
+            await self._execute_tools(calls, messages)
+
+    def _filter_tool_calls(
+        self, tool_calls: list[ToolCall], tool_ids: list[str] | None
+    ) -> list[ToolCall]:
+        """Filter tool calls by ID. Returns all if tool_ids is None."""
+        if tool_ids is None:
+            return tool_calls
+        return [c for c in tool_calls if c.id in tool_ids]
+
+    def _ack_skipped_tools(
+        self,
+        all_calls: list[ToolCall],
+        execute_ids: list[str] | None,
+        messages: list[Message],
+    ) -> None:
+        """Add synthetic tool_results for tool calls that won't be executed.
+
+        LLM APIs require every tool_call in an assistant message to have a
+        matching tool_result. When we skip executing a tool (e.g., the terminal
+        tool during confirmation), we still need to provide a result.
+        """
+        if execute_ids is None:
+            return
+        skip_ids = {c.id for c in all_calls} - set(execute_ids)
+        for call in all_calls:
+            if call.id in skip_ids:
+                messages.append(
+                    Message(
+                        role="tool_result",
+                        content="Acknowledged. Awaiting confirmation.",
+                        tool_call_id=call.id,
+                    )
+                )
+
+    def _ack_response_tools(self, response: AgentResponse, messages: list[Message]) -> None:
+        """Acknowledge all tool_calls in a response that won't be executed.
+
+        Must be called after _add_response_if_needed for INSTRUCT/SKIP paths
+        where the assistant message contains tool_calls but no tools are executed.
+        """
+        if response.tool_calls:
+            self._ack_skipped_tools(response.tool_calls, [], messages)
+
+    def _add_response_if_needed(self, messages: list[Message], response: AgentResponse) -> None:
+        """Add response to messages if not already added."""
+        if messages:
+            last = messages[-1]
+            if (
+                last.role == "assistant"
+                and last.content == response.content
+                and last.tool_calls == (response.tool_calls or None)
+            ):
+                return
         messages.append(self._to_message(response))
 
-        if response.tool_calls:
-            await self._execute_tools(response.tool_calls, messages)
-            return None
-
-        return await self._check_completion(task, response.content, messages, iteration)
-
-    def _single_call_config(self) -> Config:
-        """Create config for single-call verbs (no tools/looping)."""
-        return Config(
-            backend=self._config.backend,
-            tools=[],
-            executor=None,
-            system=self._config.system,
-            run=None,
-            terminal_tool=None,
-            lg=self._config.lg,
-            warn_tool_support=self._config.warn_tool_support,
+    def _make_result(
+        self,
+        completed: bool,
+        action: Action,
+        response: AgentResponse,
+        messages: list[Message],
+        iteration: int,
+    ) -> TaskResult:
+        """Build a TaskResult from action and response."""
+        return TaskResult(
+            completed=completed,
+            output=action.output or response.content,
+            iterations=iteration + 1,
+            history=messages,
+            terminal_data=action.terminal_data,
+            terminal_tool=action.terminal_tool,
         )
 
-    async def _check_completion(
-        self, task: str, content: str, messages: list[Message], iteration: int
-    ) -> TaskResult | None:
-        """Check if task is complete. Returns TaskResult if done, None to continue."""
-        from llm_saia.verbs.confirm import Confirm
-
-        confirm = Confirm(self._single_call_config())
-        confirmation = await confirm(
-            claim="the task is complete based on the agent's response",
-            context=f"Task: {task}\n\nAgent's response: {content}",
-        )
-
-        if confirmation.confirmed:
-            return TaskResult(
-                completed=True, output=content, iterations=iteration + 1, history=messages
+    def _log_action(self, action: Action) -> None:
+        """Log the controller's decision."""
+        if self._lg:
+            self._lg.debug(
+                "controller_action",
+                extra={"kind": action.kind.value, "reason": action.reason},
             )
-
-        wrap_up = (
-            f"The task is not yet complete. Reason: {confirmation.reason}\n"
-            "Please continue working on the task or use the available tools."
-        )
-        messages.append(Message(role="user", content=wrap_up))
-        return None

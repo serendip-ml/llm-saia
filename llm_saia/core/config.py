@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "RunConfig",
+    "TerminalConfig",
     "Config",
     "DEFAULT_RUN",
 ]
@@ -56,6 +57,20 @@ class RunConfig:
 
 
 @dataclass
+class TerminalConfig:
+    """Configuration for terminal tool behavior.
+
+    The terminal tool is a special tool that signals task completion.
+    When the LLM calls this tool, the controller confirms and extracts the result.
+    """
+
+    tool: str  # Name of the terminal tool (e.g., "complete_task")
+    output_field: str | None = None  # Field containing output (default: check common names)
+    status_field: str | None = None  # Field containing status (default: "status")
+    failure_values: tuple[str, ...] = ("stuck", "failed", "error")  # Status values = failure
+
+
+@dataclass
 class Config:
     """Configuration for SAIA instances."""
 
@@ -64,7 +79,7 @@ class Config:
     executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None
     system: str | None
     run: RunConfig | None = None
-    terminal_tool: str | None = None
+    terminal: TerminalConfig | None = None  # Terminal tool configuration
     lg: Logger | None = None
     warn_tool_support: bool = True
 

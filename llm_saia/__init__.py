@@ -2,7 +2,8 @@
 
 from llm_saia.builder import SAIABuilder
 from llm_saia.core.backend import AgentResponse, Backend, Message, ToolCall, ToolDef
-from llm_saia.core.config import Config, RunConfig
+from llm_saia.core.config import Config, RunConfig, TerminalConfig
+from llm_saia.core.controller import LoopController
 from llm_saia.core.errors import (
     BackendError,
     ConfigurationError,
@@ -58,4 +59,7 @@ __all__ = [
     "TaskResult",
     "ToolCall",
     "ToolDef",
+    # Controller / terminal
+    "LoopController",
+    "TerminalConfig",
 ]

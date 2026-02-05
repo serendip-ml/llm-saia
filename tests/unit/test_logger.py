@@ -5,7 +5,7 @@ from typing import Any
 import pytest
 
 from llm_saia import Logger, NullLogger
-from llm_saia.core.types import AgentResponse, ToolCall, ToolDef
+from llm_saia.core.types import AgentResponse, ClassifyResult, ToolCall, ToolDef
 from tests.unit.conftest import MockBackend, make_saia
 
 pytestmark = pytest.mark.unit
@@ -232,7 +232,7 @@ class TestLoggerIntegration:
 
         saia = make_saia(mock_backend, tools=tools, executor=executor, lg=logger)
 
-        # Queue: tool call -> completion response -> confirm says done
+        # Queue: tool call -> completion response -> classifier says completed
         mock_backend.queue_response(
             AgentResponse(
                 content="calling tool",
@@ -243,7 +243,9 @@ class TestLoggerIntegration:
         mock_backend.queue_response(
             AgentResponse(content="task done", tool_calls=[], stop_reason="end_turn")
         )
-        # ConfirmResult default is confirmed=True
+        mock_backend.set_structured_response(
+            ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Done")
+        )
 
         result = await saia.complete("do a task")
 

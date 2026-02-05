@@ -4,7 +4,14 @@ from typing import Any
 
 import pytest
 
-from llm_saia.core.types import AgentResponse, ConfirmResult, RunConfig, ToolCall, ToolDef
+from llm_saia.core.config import Config
+from llm_saia.core.types import (
+    AgentResponse,
+    ClassifyResult,
+    RunConfig,
+    ToolCall,
+    ToolDef,
+)
 from tests.unit.conftest import MockBackend, make_saia
 
 pytestmark = pytest.mark.unit
@@ -51,7 +58,7 @@ class TestTask:
             AgentResponse(content="Task completed!", tool_calls=[], stop_reason="end_turn")
         )
         mock_backend.set_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=True, reason="Task is done")
+            ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Done")
         )
 
         result = await saia.complete(task="Do something simple")
@@ -84,7 +91,7 @@ class TestTask:
             AgentResponse(content="Found it. Done.", tool_calls=[], stop_reason="end_turn")
         )
         mock_backend.set_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=True, reason="Task done")
+            ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Done")
         )
 
         result = await saia.complete(task="Search for Python")
@@ -107,20 +114,22 @@ class TestTask:
             AgentResponse(content="Now I finished!", tool_calls=[], stop_reason="end_turn")
         )
 
-        # First call returns not confirmed, second returns confirmed
+        # First call returns wants_continue, second returns completed
         mock_backend.queue_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=False, reason="Work not finished")
+            ClassifyResult,
+            ClassifyResult(category="wants_continue", confidence=1.0, reason="Work not finished"),
         )
         mock_backend.queue_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=True, reason="Done")
+            ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Done")
         )
 
         result = await saia.complete(task="Complete a task")
 
         assert result.completed is True
         assert result.iterations == 2
-        wrap_up_messages = [m for m in result.history if "not yet complete" in m.content.lower()]
-        assert len(wrap_up_messages) >= 1
+        # Check for nudge message (now says "didn't use any tools" instead of "not yet complete")
+        nudge_messages = [m for m in result.history if "didn't use any tools" in m.content.lower()]
+        assert len(nudge_messages) >= 1
 
     async def test_task_max_iterations(
         self, mock_backend: MockBackend, sample_tools: list[ToolDef]
@@ -134,7 +143,8 @@ class TestTask:
                 AgentResponse(content="Still working...", tool_calls=[], stop_reason="end_turn")
             )
         mock_backend.set_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=False, reason="Not done")
+            ClassifyResult,
+            ClassifyResult(category="wants_continue", confidence=1.0, reason="Not done"),
         )
 
         result = await saia.complete(task="Impossible task")
@@ -153,7 +163,7 @@ class TestTask:
             AgentResponse(content="Done!", tool_calls=[], stop_reason="end_turn")
         )
         mock_backend.set_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=True, reason="Complete")
+            ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Complete")
         )
 
         async def on_iteration(iteration: int, response: AgentResponse) -> None:
@@ -185,7 +195,8 @@ class TestTask:
             AgentResponse(content="Tool failed, but done.", tool_calls=[], stop_reason="end_turn")
         )
         mock_backend.set_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=True, reason="Done despite error")
+            ClassifyResult,
+            ClassifyResult(category="completed", confidence=1.0, reason="Done despite error"),
         )
 
         result = await saia.complete(task="Try a failing tool")
@@ -224,7 +235,8 @@ class TestTask:
                 AgentResponse(content="Working...", tool_calls=[], stop_reason="end_turn")
             )
         mock_backend.set_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=False, reason="Not done")
+            ClassifyResult,
+            ClassifyResult(category="wants_continue", confidence=1.0, reason="Not done"),
         )
 
         result = await saia.complete(task="Long task")
@@ -249,13 +261,14 @@ class TestTask:
             AgentResponse(content="Done!", tool_calls=[], stop_reason="end_turn")
         )
 
-        # Queue 5 "not confirmed" responses, then one "confirmed"
+        # Queue 5 "wants_continue" responses, then one "completed"
         for _ in range(5):
             mock_backend.queue_structured_response(
-                ConfirmResult, ConfirmResult(confirmed=False, reason="Keep going")
+                ClassifyResult,
+                ClassifyResult(category="wants_continue", confidence=1.0, reason="Keep going"),
             )
         mock_backend.queue_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=True, reason="Complete")
+            ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Complete")
         )
 
         result = await saia.complete(task="Long running task")
@@ -321,6 +334,8 @@ class TestTask:
         assert result.iterations == 2  # Initial call + confirmation
         assert result.terminal_tool == "task_complete"
         assert result.terminal_data == {"summary": "Successfully completed the search"}
+        # Output is from the confirmation response
+        assert result.output == "Confirmed complete"
 
     async def test_task_terminal_tool_not_executed_on_confirm(
         self, mock_backend: MockBackend, sample_tools: list[ToolDef]
@@ -370,10 +385,10 @@ class TestTask:
         assert executed_tools == []
         assert result.terminal_tool == "finish"
 
-    async def test_task_terminal_tool_in_batch_skips_other_tools(
+    async def test_task_terminal_tool_in_batch_executes_other_tools(
         self, mock_backend: MockBackend, sample_tools: list[ToolDef]
     ) -> None:
-        """When terminal tool is in a batch with other tools, other tools are not executed."""
+        """When terminal tool is in a batch with other tools, other tools ARE executed."""
         executed_tools: list[str] = []
 
         async def tracking_executor(name: str, args: dict[str, Any]) -> str:
@@ -417,8 +432,8 @@ class TestTask:
         result = await saia.complete(task="Search and finish")
 
         assert result.completed is True
-        # Neither tool was executed - terminal tool detection short-circuits
-        assert executed_tools == []
+        # Non-terminal tools are executed before asking for confirmation
+        assert executed_tools == ["search"]
         assert result.terminal_tool == "finish"
 
     async def test_task_terminal_tool_can_be_reconsidered(
@@ -444,6 +459,8 @@ class TestTask:
             executor=tracking_executor,
             terminal_tool="finish",
         )
+        # Needs enough iterations for: 1st finish, reconsider, 2nd finish, confirm
+        saia = saia.with_run_config(RunConfig(max_iterations=0))
 
         # First: LLM prematurely calls terminal tool
         mock_backend.queue_tool_response(
@@ -481,14 +498,16 @@ class TestTask:
         result = await saia.complete(task="Search and finish")
 
         assert result.completed is True
+        assert result.iterations == 4
         # The search tool was executed when LLM decided to continue
         assert executed_tools == ["search"]
         assert result.terminal_tool == "finish"
+        assert result.output == "Confirmed"
 
-    async def test_task_without_terminal_tool_uses_confirm(
+    async def test_task_without_terminal_tool_uses_classifier(
         self, mock_backend: MockBackend, sample_tools: list[ToolDef]
     ) -> None:
-        """Without terminal_tool configured, task uses Confirm verb for completion."""
+        """Without terminal_tool configured, task uses classifier for completion."""
         saia = make_saia(
             mock_backend,
             tools=sample_tools,
@@ -500,7 +519,8 @@ class TestTask:
             AgentResponse(content="Task done!", tool_calls=[], stop_reason="end_turn")
         )
         mock_backend.set_structured_response(
-            ConfirmResult, ConfirmResult(confirmed=True, reason="Task is complete")
+            ClassifyResult,
+            ClassifyResult(category="completed", confidence=1.0, reason="Task is complete"),
         )
 
         result = await saia.complete(task="Do something")
@@ -555,3 +575,189 @@ class TestTask:
         assert result.completed is True
         assert result.terminal_tool == "finish"
         assert result.terminal_data == non_serializable_args
+
+    async def test_task_terminal_confirmation_produces_tool_results(
+        self, mock_backend: MockBackend, sample_tools: list[ToolDef]
+    ) -> None:
+        """INSTRUCT path for terminal confirmation adds tool_result for orphaned tool_calls."""
+        terminal_tool_def = ToolDef(
+            name="finish",
+            description="Finish task",
+            parameters={"type": "object", "properties": {}, "required": []},
+        )
+
+        saia = make_saia(
+            mock_backend,
+            tools=sample_tools + [terminal_tool_def],
+            executor=dummy_executor,
+            terminal_tool="finish",
+        )
+
+        # First: LLM calls only the terminal tool (triggers INSTRUCT confirmation)
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Done",
+                tool_calls=[ToolCall(id="call_1", name="finish", arguments={"output": "ok"})],
+                stop_reason="tool_use",
+            )
+        )
+        # Second: LLM confirms
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Confirmed",
+                tool_calls=[ToolCall(id="call_2", name="finish", arguments={"output": "ok"})],
+                stop_reason="tool_use",
+            )
+        )
+
+        result = await saia.complete(task="Do something")
+
+        assert result.completed is True
+        # Verify that every non-final assistant tool_call has a matching tool_result.
+        # The final assistant message (COMPLETE/FAIL) won't have tool_results since
+        # no further _chat() call follows, which is correct.
+        assistant_msgs = [
+            (i, m) for i, m in enumerate(result.history) if m.role == "assistant" and m.tool_calls
+        ]
+        # Check all except the last assistant message (the confirmed terminal response)
+        for idx, msg in assistant_msgs[:-1]:
+            for tc in msg.tool_calls:
+                matching = [
+                    m
+                    for m in result.history[idx + 1 :]
+                    if m.role == "tool_result" and m.tool_call_id == tc.id
+                ]
+                assert matching, f"No tool_result for tool_call {tc.id} ({tc.name})"
+
+    async def test_task_terminal_failure_preserves_terminal_data(
+        self, mock_backend: MockBackend, sample_tools: list[ToolDef]
+    ) -> None:
+        """Terminal tool failure result preserves terminal_data and terminal_tool."""
+        from llm_saia.core.config import TerminalConfig
+
+        terminal_tool_def = ToolDef(
+            name="finish",
+            description="Finish task",
+            parameters={"type": "object", "properties": {}, "required": []},
+        )
+
+        config = Config(
+            backend=mock_backend,
+            tools=sample_tools + [terminal_tool_def],
+            executor=dummy_executor,
+            system=None,
+            terminal=TerminalConfig(tool="finish", failure_values=("stuck", "failed")),
+            run=RunConfig(max_retries=0),  # No failure retries
+        )
+        from llm_saia import SAIA
+
+        saia = SAIA(config)
+
+        # First: LLM calls terminal with failure status
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="I'm stuck",
+                tool_calls=[
+                    ToolCall(
+                        id="c1", name="finish", arguments={"status": "stuck", "reason": "blocked"}
+                    )
+                ],
+                stop_reason="tool_use",
+            )
+        )
+        # Confirmation: same failure
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Confirmed stuck",
+                tool_calls=[
+                    ToolCall(
+                        id="c2", name="finish", arguments={"status": "stuck", "reason": "blocked"}
+                    )
+                ],
+                stop_reason="tool_use",
+            )
+        )
+
+        result = await saia.complete(task="Do something")
+
+        assert result.completed is False
+        assert result.terminal_tool == "finish"
+        assert result.terminal_data == {"status": "stuck", "reason": "blocked"}
+
+
+class TestDefaultController:
+    """Tests for DefaultController."""
+
+    def test_has_contradiction_detects_continuation_signals(
+        self, mock_backend: MockBackend
+    ) -> None:
+        """Controller detects continuation signals in confirmation."""
+        from llm_saia.core.controller import ControllerConfig, DefaultController
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+
+        # Should detect contradiction
+        assert controller._has_contradiction("Let me check one more thing")
+        assert controller._has_contradiction("I will continue")
+        assert controller._has_contradiction("Let's proceed")
+
+        # Clean confirmation - no contradiction
+        assert not controller._has_contradiction("Confirmed")
+        assert not controller._has_contradiction("Yes, done")
+        assert not controller._has_contradiction("")
+
+
+class TestTaskStateClassifier:
+    """Tests for TaskStateClassifier."""
+
+    async def test_classifier_returns_completed_state(self, mock_backend: MockBackend) -> None:
+        """Classifier returns COMPLETED when LLM classifies as completed."""
+        from llm_saia.core.classifier import LLMTaskStateClassifier, TaskState
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        classifier = LLMTaskStateClassifier(config)
+
+        mock_backend.set_structured_response(
+            ClassifyResult, ClassifyResult(category="completed", confidence=0.95, reason="Done")
+        )
+
+        result = await classifier.classify("do something", "Task done!", ["tool1", "tool2"])
+
+        assert result.state == TaskState.COMPLETED
+        assert result.confidence == 0.95
+        assert result.reason == "Done"
+
+    async def test_classifier_returns_stuck_state(self, mock_backend: MockBackend) -> None:
+        """Classifier returns STUCK when LLM classifies as stuck."""
+        from llm_saia.core.classifier import LLMTaskStateClassifier, TaskState
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        classifier = LLMTaskStateClassifier(config)
+
+        mock_backend.set_structured_response(
+            ClassifyResult,
+            ClassifyResult(category="stuck", confidence=0.8, reason="Cannot proceed"),
+        )
+
+        result = await classifier.classify("do something", "I'm stuck", ["tool1"])
+
+        assert result.state == TaskState.STUCK
+
+    async def test_classifier_falls_back_on_invalid_category(
+        self, mock_backend: MockBackend
+    ) -> None:
+        """Classifier falls back to WANTS_CONTINUE on invalid category."""
+        from llm_saia.core.classifier import LLMTaskStateClassifier, TaskState
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        classifier = LLMTaskStateClassifier(config)
+
+        mock_backend.set_structured_response(
+            ClassifyResult,
+            ClassifyResult(category="invalid_category", confidence=0.5, reason="Unknown"),
+        )
+
+        result = await classifier.classify("do something", "Response", [])
+
+        assert result.state == TaskState.WANTS_CONTINUE
