@@ -7,6 +7,7 @@ from dataclasses import replace
 from typing import Any
 
 from llm_saia.core.backend import SAIABackend
+from llm_saia.core.logger import SAIALogger
 from llm_saia.core.types import RunConfig, ToolDef
 from llm_saia.verbs import (
     Ask,
@@ -48,6 +49,7 @@ class SAIA:
         system: str | None = None,
         run: RunConfig | None = None,
         terminal_tool: str | None = None,
+        lg: SAIALogger | None = None,
         *,
         _memory: dict[str, Any] | None = None,
     ):
@@ -58,6 +60,7 @@ class SAIA:
         self._system = system
         self._run = run or DEFAULT_RUN
         self._terminal_tool = terminal_tool
+        self._lg = lg
         self._memory = _memory if _memory is not None else {}
         self._init_verbs()
 
@@ -70,6 +73,7 @@ class SAIA:
             system=self._system,
             run=self._run,
             terminal_tool=self._terminal_tool,
+            lg=self._lg,
         )
         self.ask = Ask(config)
         self.choose = Choose(config)
@@ -100,6 +104,7 @@ class SAIA:
             system=self._system,
             run=replace(self._run, **kwargs),
             terminal_tool=self._terminal_tool,
+            lg=self._lg,
             _memory=self._memory,
         )
 
@@ -112,6 +117,7 @@ class SAIA:
             system=self._system,
             run=run,
             terminal_tool=self._terminal_tool,
+            lg=self._lg,
             _memory=self._memory,
         )
 

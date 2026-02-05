@@ -276,10 +276,10 @@ class TestTask:
         assert result.completed is True
         assert result.iterations == 6  # 5 "not done" + 1 "done"
 
-    async def test_task_terminal_tool_completes_immediately(
+    async def test_task_terminal_tool_requires_confirmation(
         self, mock_backend: MockBackend, sample_tools: list[ToolDef]
     ) -> None:
-        """Task completes immediately when LLM calls the terminal tool."""
+        """Task completes when LLM calls terminal tool twice (initial + confirmation)."""
         # Add terminal tool to the tool list
         terminal_tool_def = ToolDef(
             name="task_complete",
@@ -299,7 +299,7 @@ class TestTask:
             terminal_tool="task_complete",
         )
 
-        # LLM calls the terminal tool
+        # First: LLM calls terminal tool
         mock_backend.queue_tool_response(
             AgentResponse(
                 content="Task finished!",
@@ -313,18 +313,80 @@ class TestTask:
                 stop_reason="tool_use",
             )
         )
+        # Second: LLM confirms by calling terminal tool again
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Confirmed complete",
+                tool_calls=[
+                    ToolCall(
+                        id="call_2",
+                        name="task_complete",
+                        arguments={"summary": "Successfully completed the search"},
+                    )
+                ],
+                stop_reason="tool_use",
+            )
+        )
 
         result = await saia.complete(task="Do something")
 
         assert result.completed is True
-        assert result.iterations == 1
+        assert result.iterations == 2  # Initial call + confirmation
         assert result.terminal_tool == "task_complete"
         assert result.terminal_data == {"summary": "Successfully completed the search"}
 
-    async def test_task_terminal_tool_not_executed(
+    async def test_task_terminal_tool_not_executed_on_confirm(
         self, mock_backend: MockBackend, sample_tools: list[ToolDef]
     ) -> None:
-        """Terminal tool is not executed - invocation signals completion."""
+        """Terminal tool itself is not executed - only signals completion."""
+        executed_tools: list[str] = []
+
+        async def tracking_executor(name: str, args: dict[str, Any]) -> str:
+            executed_tools.append(name)
+            return f"Executed {name}"
+
+        terminal_tool_def = ToolDef(
+            name="finish",
+            description="Finish task",
+            parameters={"type": "object", "properties": {}, "required": []},
+        )
+        tools_with_terminal = sample_tools + [terminal_tool_def]
+
+        saia = SAIA(
+            backend=mock_backend,
+            tools=tools_with_terminal,
+            executor=tracking_executor,
+            terminal_tool="finish",
+        )
+
+        # First: LLM calls terminal tool
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Done",
+                tool_calls=[ToolCall(id="call_1", name="finish", arguments={})],
+                stop_reason="tool_use",
+            )
+        )
+        # Second: LLM confirms by calling terminal tool again
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Confirmed",
+                tool_calls=[ToolCall(id="call_2", name="finish", arguments={})],
+                stop_reason="tool_use",
+            )
+        )
+
+        result = await saia.complete(task="Do and finish")
+
+        assert result.completed is True
+        # Terminal tool is never executed - it only signals completion
+        assert executed_tools == []
+        assert result.terminal_tool == "finish"
+
+    async def test_task_terminal_tool_in_batch_skips_other_tools(
+        self, mock_backend: MockBackend, sample_tools: list[ToolDef]
+    ) -> None:
+        """When terminal tool is in a batch with other tools, other tools are not executed."""
         executed_tools: list[str] = []
 
         async def tracking_executor(name: str, args: dict[str, Any]) -> str:
@@ -356,12 +418,84 @@ class TestTask:
                 stop_reason="tool_use",
             )
         )
+        # LLM confirms terminal tool
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Confirmed",
+                tool_calls=[ToolCall(id="call_3", name="finish", arguments={})],
+                stop_reason="tool_use",
+            )
+        )
 
         result = await saia.complete(task="Search and finish")
 
         assert result.completed is True
-        # Neither tool was executed - terminal tool detection happens before execution
+        # Neither tool was executed - terminal tool detection short-circuits
         assert executed_tools == []
+        assert result.terminal_tool == "finish"
+
+    async def test_task_terminal_tool_can_be_reconsidered(
+        self, mock_backend: MockBackend, sample_tools: list[ToolDef]
+    ) -> None:
+        """LLM can continue working instead of confirming terminal tool."""
+        executed_tools: list[str] = []
+
+        async def tracking_executor(name: str, args: dict[str, Any]) -> str:
+            executed_tools.append(name)
+            return f"Executed {name}"
+
+        terminal_tool_def = ToolDef(
+            name="finish",
+            description="Finish task",
+            parameters={"type": "object", "properties": {}, "required": []},
+        )
+        tools_with_terminal = sample_tools + [terminal_tool_def]
+
+        saia = SAIA(
+            backend=mock_backend,
+            tools=tools_with_terminal,
+            executor=tracking_executor,
+            terminal_tool="finish",
+        )
+
+        # First: LLM prematurely calls terminal tool
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Done",
+                tool_calls=[ToolCall(id="call_1", name="finish", arguments={})],
+                stop_reason="tool_use",
+            )
+        )
+        # Second: After seeing confirmation prompt, LLM decides to continue working
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Actually, let me search first",
+                tool_calls=[ToolCall(id="call_2", name="search", arguments={"query": "more"})],
+                stop_reason="tool_use",
+            )
+        )
+        # Third: Now LLM calls terminal tool again
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Now done",
+                tool_calls=[ToolCall(id="call_3", name="finish", arguments={})],
+                stop_reason="tool_use",
+            )
+        )
+        # Fourth: LLM confirms
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Confirmed",
+                tool_calls=[ToolCall(id="call_4", name="finish", arguments={})],
+                stop_reason="tool_use",
+            )
+        )
+
+        result = await saia.complete(task="Search and finish")
+
+        assert result.completed is True
+        # The search tool was executed when LLM decided to continue
+        assert executed_tools == ["search"]
         assert result.terminal_tool == "finish"
 
     async def test_task_without_terminal_tool_uses_confirm(
@@ -387,3 +521,50 @@ class TestTask:
         assert result.completed is True
         assert result.terminal_tool is None
         assert result.terminal_data is None
+
+    async def test_task_terminal_tool_handles_non_serializable_args(
+        self, mock_backend: MockBackend, sample_tools: list[ToolDef]
+    ) -> None:
+        """Terminal tool confirmation handles non-JSON-serializable arguments gracefully."""
+        from datetime import datetime
+
+        terminal_tool_def = ToolDef(
+            name="finish",
+            description="Finish task",
+            parameters={"type": "object", "properties": {}, "required": []},
+        )
+        tools_with_terminal = sample_tools + [terminal_tool_def]
+
+        saia = SAIA(
+            backend=mock_backend,
+            tools=tools_with_terminal,
+            executor=dummy_executor,
+            terminal_tool="finish",
+        )
+
+        # Arguments contain a non-JSON-serializable object (datetime)
+        non_serializable_args = {"timestamp": datetime.now(), "data": "test"}
+
+        # First: LLM calls terminal tool with non-serializable args
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Done",
+                tool_calls=[ToolCall(id="call_1", name="finish", arguments=non_serializable_args)],
+                stop_reason="tool_use",
+            )
+        )
+        # Second: LLM confirms
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Confirmed",
+                tool_calls=[ToolCall(id="call_2", name="finish", arguments=non_serializable_args)],
+                stop_reason="tool_use",
+            )
+        )
+
+        # Should not crash - falls back to str() representation
+        result = await saia.complete(task="Do something")
+
+        assert result.completed is True
+        assert result.terminal_tool == "finish"
+        assert result.terminal_data == non_serializable_args
