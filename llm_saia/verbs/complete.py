@@ -26,6 +26,7 @@ class Complete(_Verb):
         task: str,
         on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None = None,
     ) -> TaskResult:
+        """Execute a task using tools until completion or limit reached."""
         if not self._has_tools():
             raise ValueError("Complete requires tools and executor to be configured.")
 

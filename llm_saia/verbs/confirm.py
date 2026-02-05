@@ -8,6 +8,7 @@ class Confirm(_Verb):
     """Ask for yes/no confirmation of a claim."""
 
     async def __call__(self, claim: str, context: str | None = None) -> ConfirmResult:
+        """Confirm whether a claim is true, returning confirmed status and reason."""
         if self._lg:
             self._lg.trace(
                 "checking confirmation...",

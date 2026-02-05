@@ -46,14 +46,17 @@ class _Verb(ABC):
     """Base class for all verbs. Provides shared loop functionality."""
 
     def __init__(self, config: VerbConfig):
+        """Initialize verb with configuration."""
         self._config = config
 
     @property
     def _backend(self) -> SAIABackend:
+        """Get the configured backend."""
         return self._config.backend
 
     @property
     def _lg(self) -> SAIALogger | None:
+        """Get the configured logger, if any."""
         return self._config.lg
 
     def _has_tools(self) -> bool:
