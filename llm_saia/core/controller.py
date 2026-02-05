@@ -87,6 +87,7 @@ class ControllerConfig:
     terminal: TerminalConfig | None = None  # Terminal tool configuration
     backoff_iterations: int = 5  # Iterations to wait after nudging
     max_confirmation_retries: int = 3  # Max retries for terminal tool confirmation
+    max_failure_retries: int = 1  # Max retries when terminal tool indicates failure
 
 
 # Default nudge messages for each state
@@ -123,12 +124,14 @@ class DefaultController:
     _last_nudge_iteration: int = field(default=-100, init=False, repr=False)
     _pending_terminal: ToolCall | None = field(default=None, init=False, repr=False)
     _confirmation_retries: int = field(default=0, init=False, repr=False)
+    _failure_retries: int = field(default=0, init=False, repr=False)
 
     def reset(self) -> None:
         """Reset state for a new task."""
         self._last_nudge_iteration = -self.config.backoff_iterations
         self._pending_terminal = None
         self._confirmation_retries = 0
+        self._failure_retries = 0
 
     async def decide(self, obs: Observation) -> Action:
         """Decide what action to take."""
@@ -158,6 +161,10 @@ class DefaultController:
         # First terminal call - request confirmation
         if terminal_call:
             return self._request_confirmation(terminal_call, obs)
+
+        # LLM reconsidered - clear pending state so next terminal call is fresh
+        if self._pending_terminal:
+            self._pending_terminal = None
 
         return None
 
@@ -196,27 +203,15 @@ class DefaultController:
 
     def _handle_confirmation(self, call: ToolCall, obs: Observation) -> Action:
         """Handle confirmation of terminal tool."""
-        # Check for contradiction (says confirmed but has continuation signals)
         if self._has_contradiction(obs.response.content):
-            self._confirmation_retries += 1
-            if self._confirmation_retries >= self.config.max_confirmation_retries:
-                self._pending_terminal = None
-                return Action(
-                    ActionKind.FAIL,
-                    output=obs.response.content,
-                    reason="confirmation_retries_exceeded",
-                )
+            return self._handle_contradiction(obs.response.content)
 
-            msg = (
-                "Your response contains contradictory signals - you confirmed completion "
-                "but also indicated you want to continue. Please either continue working "
-                "using the available tools, or call the terminal tool with a clear final answer."
-            )
-            return Action(ActionKind.INSTRUCT, message=msg, reason="contradiction_detected")
-
-        # Confirmed - complete or fail based on status
         output = self._extract_terminal_output(call.arguments, obs.response.content)
         is_failure = self._is_terminal_failure(call.arguments)
+
+        if is_failure and self._failure_retries < self.config.max_failure_retries:
+            return self._handle_failure_retry(call.arguments)
+
         self._pending_terminal = None
         return Action(
             ActionKind.FAIL if is_failure else ActionKind.COMPLETE,
@@ -226,26 +221,55 @@ class DefaultController:
             reason="terminal_confirmed_fail" if is_failure else "terminal_confirmed",
         )
 
+    def _handle_contradiction(self, content: str) -> Action:
+        """Handle contradictory confirmation (continuation signals detected)."""
+        self._confirmation_retries += 1
+        if self._confirmation_retries >= self.config.max_confirmation_retries:
+            self._pending_terminal = None
+            return Action(
+                ActionKind.FAIL,
+                output=content,
+                reason="confirmation_retries_exceeded",
+            )
+        msg = (
+            "Your response contains contradictory signals - you confirmed completion "
+            "but also indicated you want to continue. Please either continue working "
+            "using the available tools, or call the terminal tool with a clear final answer."
+        )
+        return Action(ActionKind.INSTRUCT, message=msg, reason="contradiction_detected")
+
+    def _handle_failure_retry(self, arguments: dict[str, Any]) -> Action:
+        """Push back on failure status and let the agent retry."""
+        self._failure_retries += 1
+        self._pending_terminal = None
+        status = arguments.get("status", "unknown")
+        msg = (
+            f"You indicated status '{status}' but the task is not complete.\n"
+            f"Please continue working on the task using the available tools. "
+            f"Do not give up - try a different approach if needed."
+        )
+        return Action(ActionKind.INSTRUCT, message=msg, reason="terminal_failure_retry")
+
     def _is_terminal_failure(self, arguments: dict[str, Any]) -> bool:
         """Check if terminal tool arguments indicate failure.
 
         Uses configured status_field if set, otherwise checks "status".
-        Returns True if status value matches any failure value.
+        Returns True if status value exactly matches any failure value (case-insensitive).
         """
         terminal = self.config.terminal
         # Get status field name (default: "status")
         status_field = (terminal.status_field if terminal else None) or "status"
-        status_value = arguments.get(status_field, "")
+        status_value = arguments.get(status_field)
 
-        if not status_value:
+        if status_value is None:
             return False
 
         # Get failure values (default if not configured)
         failure_values = terminal.failure_values if terminal else ("stuck", "failed", "error")
 
-        # Check against failure values (case-insensitive)
+        # Exact match, case-insensitive
         status_lower = str(status_value).lower()
-        return any(fv in status_lower for fv in failure_values)
+        return status_lower in failure_values
 
     def _extract_terminal_output(self, arguments: dict[str, Any], fallback: str) -> str:
         """Extract output from terminal tool arguments.
@@ -255,33 +279,66 @@ class DefaultController:
         """
         terminal = self.config.terminal
         # Use configured field if set
-        field = terminal.output_field if terminal else None
-        if field and field in arguments and arguments[field]:
-            return str(arguments[field])
+        field_name = terminal.output_field if terminal else None
+        if field_name and field_name in arguments and arguments[field_name] is not None:
+            return str(arguments[field_name])
 
         # Fallback: check common field names
         common_fields = ("conclusion", "output", "result", "answer", "response")
-        for field in common_fields:
-            if field in arguments and arguments[field]:
-                return str(arguments[field])
+        for name in common_fields:
+            if name in arguments and arguments[name] is not None:
+                return str(arguments[name])
 
         return fallback
 
+    # Phrases indicating the LLM wants to continue (contradicts completion confirmation)
+    _CONTINUATION_SIGNALS = (
+        # Intent to act
+        "let me ",
+        "i will ",
+        "i'll ",
+        "let's ",
+        "now i'll",
+        "now i will",
+        "next, i will",
+        "next i will",
+        "i'm going to use",
+        "i am going to use",
+        # Asking for permission
+        "shall i ",
+        "should i ",
+        "would you like me to",
+        "would you like to proceed",
+        "do you want me to",
+        "do you want to proceed",
+        "want me to continue",
+    )
+
+    # Patterns that look like tool invocations written as text (tool access lost)
+    _TEXT_TOOL_PATTERNS = (
+        "read_file",
+        "shell ",
+        "execute(",
+        "run_command",
+        "search_files",
+        "list_files",
+    )
+
     def _has_contradiction(self, content: str) -> bool:
-        """Check if content has continuation signals (contradiction)."""
+        """Check if content has continuation signals (contradiction).
+
+        Detects two categories:
+        1. Continuation phrases (e.g., "let me check", "I will continue")
+        2. Text tool patterns (e.g., LLM writes "read_file" as text instead of calling it)
+        """
         if not content:
             return False
         content_lower = content.lower()
-        signals = (
-            "let me ",
-            "i will ",
-            "i'll ",
-            "let's ",
-            "shall i ",
-            "should i ",
-            "would you like me to",
-        )
-        return any(s in content_lower for s in signals)
+        if any(s in content_lower for s in self._CONTINUATION_SIGNALS):
+            return True
+        if any(p in content_lower for p in self._TEXT_TOOL_PATTERNS):
+            return True
+        return False
 
     async def _handle_no_tools(self, obs: Observation) -> Action:
         """Handle response with no tool calls."""

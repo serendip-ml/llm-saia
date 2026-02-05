@@ -459,6 +459,8 @@ class TestTask:
             executor=tracking_executor,
             terminal_tool="finish",
         )
+        # Needs enough iterations for: 1st finish, reconsider, 2nd finish, confirm
+        saia = saia.with_run_config(RunConfig(max_iterations=0))
 
         # First: LLM prematurely calls terminal tool
         mock_backend.queue_tool_response(
@@ -496,9 +498,11 @@ class TestTask:
         result = await saia.complete(task="Search and finish")
 
         assert result.completed is True
+        assert result.iterations == 4
         # The search tool was executed when LLM decided to continue
         assert executed_tools == ["search"]
         assert result.terminal_tool == "finish"
+        assert result.output == "Confirmed"
 
     async def test_task_without_terminal_tool_uses_classifier(
         self, mock_backend: MockBackend, sample_tools: list[ToolDef]

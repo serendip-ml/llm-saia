@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING
 
 from llm_saia.core.backend import AgentResponse, Message, ToolCall
 from llm_saia.core.config import RunConfig
@@ -18,9 +17,6 @@ from llm_saia.core.controller import (
 )
 from llm_saia.core.types import TaskResult
 from llm_saia.core.verb import Verb
-
-if TYPE_CHECKING:
-    pass
 
 # Default run config for complete (unlimited iterations)
 DEFAULT_COMPLETE_RUN = RunConfig(max_iterations=0)
@@ -111,10 +107,12 @@ class Complete(Verb):
             lg=self._config.lg,
             warn_tool_support=self._config.warn_tool_support,
         )
+        run = self._config.run or DEFAULT_COMPLETE_RUN
         return DefaultController(
             config=ControllerConfig(
                 llm_config=llm_config,
                 terminal=self._config.terminal,
+                max_failure_retries=run.max_retries,
             ),
         )
 
