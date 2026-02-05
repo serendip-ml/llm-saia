@@ -54,7 +54,8 @@ class TestSAIABuilder:
         """Build with terminal tool."""
         saia = SAIA.builder().backend(mock_backend).terminal_tool("finish").build()
 
-        assert saia._config.terminal_tool == "finish"
+        assert saia._config.terminal is not None
+        assert saia._config.terminal.tool == "finish"
 
     def test_build_with_logger(self, mock_backend: MockBackend) -> None:
         """Build with logger."""
@@ -126,7 +127,8 @@ class TestSAIABuilder:
         assert saia._config.backend is mock_backend
         assert saia._config.tools == tools
         assert saia._config.system == "You are helpful"
-        assert saia._config.terminal_tool == "finish"
+        assert saia._config.terminal is not None
+        assert saia._config.terminal.tool == "finish"
         assert saia.run_config.max_iterations == 5
         assert saia.run_config.max_call_tokens == 2048
         assert saia.run_config.max_total_tokens == 8000

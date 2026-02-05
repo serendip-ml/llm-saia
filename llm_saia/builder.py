@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from llm_saia.core.backend import Backend, ToolDef
-from llm_saia.core.config import Config, RunConfig
+from llm_saia.core.config import Config, RunConfig, TerminalConfig
 from llm_saia.core.logger import Logger
 
 if TYPE_CHECKING:
@@ -31,7 +31,7 @@ class SAIABuilder:
         self._tools: list[ToolDef] = []
         self._executor: Callable[[str, dict[str, Any]], Awaitable[Any]] | None = None
         self._system: str | None = None
-        self._terminal_tool: str | None = None
+        self._terminal: TerminalConfig | None = None
         self._lg: Logger | None = None
         self._warn_tool_support: bool = True
         # RunConfig fields (defaults match RunConfig)
@@ -62,9 +62,35 @@ class SAIABuilder:
         self._system = prompt
         return self
 
+    def terminal(
+        self,
+        tool: str,
+        output_field: str | None = None,
+        status_field: str | None = None,
+        failure_values: tuple[str, ...] | None = None,
+    ) -> SAIABuilder:
+        """Set terminal tool configuration for task completion.
+
+        Args:
+            tool: Name of the terminal tool (e.g., "complete_task")
+            output_field: Field in tool args containing output (default: check common names)
+            status_field: Field in tool args containing status (default: "status")
+            failure_values: Status values that indicate failure (default: stuck/failed/error)
+        """
+        self._terminal = TerminalConfig(
+            tool=tool,
+            output_field=output_field,
+            status_field=status_field,
+            failure_values=failure_values or ("stuck", "failed", "error"),
+        )
+        return self
+
     def terminal_tool(self, name: str) -> SAIABuilder:
-        """Set terminal tool name for task completion."""
-        self._terminal_tool = name
+        """Set terminal tool name for task completion (simple form).
+
+        For more control, use .terminal() instead.
+        """
+        self._terminal = TerminalConfig(tool=name)
         return self
 
     def logger(self, lg: Logger) -> SAIABuilder:
@@ -128,7 +154,7 @@ class SAIABuilder:
             executor=self._executor,
             system=self._system,
             run=run,
-            terminal_tool=self._terminal_tool,
+            terminal=self._terminal,
             lg=self._lg,
             warn_tool_support=self._warn_tool_support,
         )

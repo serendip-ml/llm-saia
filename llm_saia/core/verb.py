@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from llm_saia.core.backend import AgentResponse, Message, ToolCall
@@ -73,13 +74,21 @@ class Verb(ABC):
                         "total": total_tokens,
                     },
                     "stop_reason": response.stop_reason,
-                    "tool_calls": bool(response.tool_calls),
+                    "tool_calls": len(response.tool_calls) if response.tool_calls else 0,
                     "preview": self._truncate(response.content, self._PREVIEW_LIMIT),
                 },
             )
+            tools = (
+                {
+                    str(i + 1): {"name": tc.name, "args": tc.arguments}
+                    for i, tc in enumerate(response.tool_calls)
+                }
+                if response.tool_calls
+                else None
+            )
             self._lg.trace(
-                "llm response content",
-                extra={"content": response.content},
+                "llm response details",
+                extra=OrderedDict([("tools", tools), ("content", response.content)]),
             )
 
     def _log_limit_reached(
@@ -275,27 +284,41 @@ class Verb(ABC):
                 )
             return
         for tc in tool_calls:
-            if self._lg:
-                self._lg.trace(
-                    "executing tool...",
-                    extra={"tool": tc.name, "id": tc.id},
-                )
-            try:
-                result = await self._config.executor(tc.name, tc.arguments)
-            except Exception as e:
-                if self._lg:
-                    self._lg.warning(
-                        "tool execution failed",
-                        extra={"tool": tc.name, "id": tc.id, "exception": e},
-                    )
-                result = f"Error: {e}"
-            else:
-                if self._lg:
-                    self._lg.trace(
-                        "tool executed",
-                        extra={"tool": tc.name, "id": tc.id, "result": str(result)},
-                    )
+            result = await self._execute_single_tool(tc)
             messages.append(Message(role="tool_result", content=str(result), tool_call_id=tc.id))
+
+    async def _execute_single_tool(self, tc: ToolCall) -> str:
+        """Execute a single tool call with logging."""
+        self._log_tool_start(tc)
+        try:
+            result = await self._config.executor(tc.name, tc.arguments)  # type: ignore[misc]
+        except Exception as e:
+            self._log_tool_error(tc, e)
+            return f"Error: {e}"
+        self._log_tool_success(tc, result)
+        return str(result)
+
+    def _log_tool_start(self, tc: ToolCall) -> None:
+        """Log tool execution start."""
+        if self._lg:
+            self._lg.trace(
+                "executing tool...",
+                extra={"tool": tc.name, "id": tc.id, "tool_args": tc.arguments},
+            )
+
+    def _log_tool_success(self, tc: ToolCall, result: Any) -> None:
+        """Log successful tool execution."""
+        if self._lg:
+            extra = {"tool": tc.name, "id": tc.id, "tool_args": tc.arguments, "result": str(result)}
+            self._lg.trace("tool executed", extra=extra)
+
+    def _log_tool_error(self, tc: ToolCall, error: Exception) -> None:
+        """Log failed tool execution."""
+        if self._lg:
+            self._lg.warning(
+                "tool execution failed",
+                extra={"tool": tc.name, "id": tc.id, "tool_args": tc.arguments, "exception": error},
+            )
 
     async def _finalize(
         self, prompt: str, content: str, schema: type[T] | None
