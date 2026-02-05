@@ -8,7 +8,7 @@ from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING, Any, TypeVar
 
 from llm_saia.core.backend import AgentResponse, Message, ToolCall
-from llm_saia.core.config import Config, RunConfig
+from llm_saia.core.config import DEFAULT_RUN, Config, RunConfig
 from llm_saia.core.errors import StructuredOutputError, TruncatedResponseError
 from llm_saia.core.schema import dataclass_to_json_schema, parse_json_to_dataclass
 
@@ -17,9 +17,6 @@ if TYPE_CHECKING:
     from llm_saia.core.logger import Logger
 
 T = TypeVar("T")
-
-# Default run config used when none provided
-DEFAULT_RUN = RunConfig(max_iterations=3)
 
 
 class Verb(ABC):
@@ -117,7 +114,6 @@ class Verb(ABC):
         '"function_call":',
         '"tool_calls":',
         '"tool_use":',
-        '"name":',
     )
 
     # Minimum expected input tokens per tool definition (conservative estimate)
@@ -150,7 +146,7 @@ class Verb(ABC):
         """Warn if LLM outputs tool-call JSON as text instead of using tool_calls."""
         if response.tool_calls or not response.content:
             return
-        if any(pattern in response.content for pattern in self._TOOL_CALL_PATTERNS):
+        if self._looks_like_tool_call_json(response.content):
             self._lg.warning(  # type: ignore[union-attr]
                 "tools configured but LLM returned text instead of tool_calls - "
                 "model may not support function calling",
@@ -159,6 +155,16 @@ class Verb(ABC):
                     "tool_count": len(self._config.tools),
                 },
             )
+
+    def _looks_like_tool_call_json(self, content: str) -> bool:
+        """Check if content looks like tool-call JSON (not just any JSON with 'name')."""
+        # Explicit tool-call patterns are definitive
+        if any(pattern in content for pattern in self._TOOL_CALL_PATTERNS):
+            return True
+        # "name" alone is too broad; require it alongside "arguments" or "parameters"
+        has_name = '"name":' in content
+        has_args = '"arguments":' in content or '"parameters":' in content
+        return has_name and has_args
 
     def _log_loop_complete(
         self, iteration: int, start_time: float, total_tokens: int, content: str
@@ -317,7 +323,7 @@ class Verb(ABC):
                             "schema": schema.__name__,
                         },
                     )
-                raise ValueError(f"LLM returned invalid JSON for structured output: {e}") from e
+                raise self._structured_output_error(e, response.content, schema.__name__) from e
             result = parse_json_to_dataclass(data, schema)
             return content, result
         return content, None

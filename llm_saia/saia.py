@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any
 
-from llm_saia.core.config import Config, RunConfig
+from llm_saia.core.config import DEFAULT_RUN, Config, RunConfig
 
 if TYPE_CHECKING:
     from llm_saia.builder import SAIABuilder
@@ -25,9 +25,6 @@ from llm_saia.verbs import (
     Synthesize,
     Verify,
 )
-
-# Default run config for SAIA
-DEFAULT_RUN = RunConfig(max_iterations=3)
 
 
 class SAIA:

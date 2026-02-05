@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 __all__ = [
     "RunConfig",
     "Config",
+    "DEFAULT_RUN",
 ]
 
 
@@ -66,3 +67,7 @@ class Config:
     terminal_tool: str | None = None
     lg: Logger | None = None
     warn_tool_support: bool = True
+
+
+# Default run config used when none provided
+DEFAULT_RUN = RunConfig(max_iterations=3)
