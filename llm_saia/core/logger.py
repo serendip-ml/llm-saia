@@ -27,6 +27,10 @@ class SAIALogger(Protocol):
         """Log at WARNING level."""
         ...
 
+    def error(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        """Log at ERROR level."""
+        ...
+
 
 class NullLogger:
     """No-op logger for when logging is disabled.
@@ -47,5 +51,9 @@ class NullLogger:
         pass
 
     def warning(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        """No-op."""
+        pass
+
+    def error(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         """No-op."""
         pass

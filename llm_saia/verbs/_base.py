@@ -83,13 +83,20 @@ class _Verb(ABC):
             self._lg.debug(
                 "llm response received",
                 extra={
-                    "iteration": iteration,
-                    "input_tokens": response.input_tokens,
-                    "output_tokens": response.output_tokens,
-                    "total_tokens": total_tokens,
+                    "iters": iteration,
+                    "tokens": {
+                        "input": response.input_tokens,
+                        "output": response.output_tokens,
+                        "total": total_tokens,
+                    },
                     "stop_reason": response.stop_reason,
-                    "has_tool_calls": bool(response.tool_calls),
+                    "tool_calls": bool(response.tool_calls),
+                    "preview": self._truncate(response.content, 100),
                 },
+            )
+            self._lg.trace(
+                "llm response content",
+                extra={"content": response.content},
             )
 
     def _log_limit_reached(
@@ -122,19 +129,29 @@ class _Verb(ABC):
     ) -> None:
         """Log when loop completes normally."""
         if self._lg:
-            self._lg.info(
+            self._lg.debug(
                 "verb loop completed",
                 extra={
                     "verb": self.__class__.__name__,
-                    "iterations": iteration + 1,
+                    "iters": iteration + 1,
                     "total_tokens": total_tokens,
                     "elapsed_secs": int(time.monotonic() - start_time),
-                    "content_preview": self._truncate(content, 200),
+                    "preview": self._truncate(content, 100),
                 },
             )
 
     async def _chat(self, messages: list[Message], max_tokens: int | None) -> AgentResponse:
         """Execute a single chat call."""
+        if self._lg:
+            last_msg = messages[-1] if messages else None
+            self._lg.trace(
+                "sending chat",
+                extra={
+                    "msg_count": len(messages),
+                    "last_role": last_msg.role if last_msg else None,
+                    "content": last_msg.content if last_msg else None,
+                },
+            )
         return await self._backend.chat(
             messages,
             system=self._config.system,
@@ -216,9 +233,9 @@ class _Verb(ABC):
             return
         for tc in tool_calls:
             if self._lg:
-                self._lg.debug(
-                    "executing tool",
-                    extra={"tool_name": tc.name, "tool_id": tc.id},
+                self._lg.trace(
+                    "executing tool...",
+                    extra={"tool": tc.name, "id": tc.id},
                 )
             try:
                 result = await self._config.executor(tc.name, tc.arguments)
@@ -226,9 +243,15 @@ class _Verb(ABC):
                 if self._lg:
                     self._lg.warning(
                         "tool execution failed",
-                        extra={"tool_name": tc.name, "tool_id": tc.id, "exception": e},
+                        extra={"tool": tc.name, "id": tc.id, "exception": e},
                     )
                 result = f"Error: {e}"
+            else:
+                if self._lg:
+                    self._lg.trace(
+                        "tool executed",
+                        extra={"tool": tc.name, "id": tc.id, "result": str(result)},
+                    )
             messages.append(Message(role="tool_result", content=str(result), tool_call_id=tc.id))
 
     async def _finalize(
@@ -252,7 +275,7 @@ class _Verb(ABC):
                         "json parse error in finalize",
                         extra={
                             "exception": e,
-                            "content_preview": response.content[:200],
+                            "content_preview": self._truncate(response.content, 100),
                             "schema": schema.__name__,
                         },
                     )

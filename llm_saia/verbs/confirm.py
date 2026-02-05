@@ -11,10 +11,7 @@ class Confirm(_Verb):
         if self._lg:
             self._lg.trace(
                 "checking confirmation...",
-                extra={
-                    "claim": claim,
-                    "context_preview": self._truncate(context, 100) if context else None,
-                },
+                extra={"claim": claim, "context": context},
             )
 
         prompt = f"Confirm whether this claim is true: {claim}"
@@ -23,7 +20,7 @@ class Confirm(_Verb):
         result = await self._complete_structured(prompt, ConfirmResult)
 
         if self._lg:
-            self._lg.debug(
+            self._lg.trace(
                 "confirmation result",
                 extra={"confirmed": result.confirmed, "reason": result.reason},
             )

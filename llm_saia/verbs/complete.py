@@ -69,7 +69,10 @@ class Complete(_Verb):
         if result.output:
             return result.output
         if result.terminal_data:
-            return json.dumps(result.terminal_data)
+            try:
+                return json.dumps(result.terminal_data)
+            except (TypeError, ValueError):
+                return str(result.terminal_data)
         return ""
 
     def _check_terminal_tool(
@@ -148,12 +151,7 @@ class Complete(_Verb):
     ) -> tuple[AgentResponse, int]:
         """Run one LLM iteration and return response with token count."""
         max_tokens = config.max_call_tokens if config.max_call_tokens > 0 else None
-        response = await self._backend.chat(
-            messages,
-            system=self._config.system,
-            tools=self._config.tools if self._config.tools else None,
-            max_tokens=max_tokens,
-        )
+        response = await self._chat(messages, max_tokens)
         return response, response.input_tokens + response.output_tokens
 
     async def _handle_response(

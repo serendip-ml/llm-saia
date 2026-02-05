@@ -383,6 +383,57 @@ class TestTask:
         assert executed_tools == []
         assert result.terminal_tool == "finish"
 
+    async def test_task_terminal_tool_in_batch_skips_other_tools(
+        self, mock_backend: MockBackend, sample_tools: list[ToolDef]
+    ) -> None:
+        """When terminal tool is in a batch with other tools, other tools are not executed."""
+        executed_tools: list[str] = []
+
+        async def tracking_executor(name: str, args: dict[str, Any]) -> str:
+            executed_tools.append(name)
+            return f"Executed {name}"
+
+        terminal_tool_def = ToolDef(
+            name="finish",
+            description="Finish task",
+            parameters={"type": "object", "properties": {}, "required": []},
+        )
+        tools_with_terminal = sample_tools + [terminal_tool_def]
+
+        saia = SAIA(
+            backend=mock_backend,
+            tools=tools_with_terminal,
+            executor=tracking_executor,
+            terminal_tool="finish",
+        )
+
+        # LLM calls both a work tool and terminal tool in same batch
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Done",
+                tool_calls=[
+                    ToolCall(id="call_1", name="search", arguments={"query": "test"}),
+                    ToolCall(id="call_2", name="finish", arguments={}),
+                ],
+                stop_reason="tool_use",
+            )
+        )
+        # LLM confirms terminal tool
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="Confirmed",
+                tool_calls=[ToolCall(id="call_3", name="finish", arguments={})],
+                stop_reason="tool_use",
+            )
+        )
+
+        result = await saia.complete(task="Search and finish")
+
+        assert result.completed is True
+        # Neither tool was executed - terminal tool detection short-circuits
+        assert executed_tools == []
+        assert result.terminal_tool == "finish"
+
     async def test_task_terminal_tool_can_be_reconsidered(
         self, mock_backend: MockBackend, sample_tools: list[ToolDef]
     ) -> None:

@@ -29,6 +29,9 @@ class RecordingLogger:
     def warning(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
         self.calls.append(("warning", msg, extra))
 
+    def error(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        self.calls.append(("error", msg, extra))
+
 
 class TestSAIALogger:
     def test_protocol_satisfaction(self) -> None:
@@ -48,6 +51,7 @@ class TestSAIALogger:
         logger.debug("test")
         logger.info("test", extra={"key": "value"})
         logger.warning("test")
+        logger.error("test")
         # No exception raised, no output
 
 
@@ -119,7 +123,7 @@ class TestLoggerIntegration:
         messages = [call[1] for call in logger.calls]
         assert "verb loop started" in messages
         assert "llm response received" in messages
-        assert "executing tool" in messages
+        assert "executing tool..." in messages
 
     async def test_loop_logs_limit_reached(self, mock_backend: MockBackend) -> None:
         """Loop logs when iteration limit is reached."""
@@ -180,7 +184,7 @@ class TestLoggerIntegration:
         assert len(warning_calls) > 0
         error_call = [c for c in warning_calls if c[1] == "tool execution failed"][0]
         assert error_call[2] is not None
-        assert error_call[2]["tool_name"] == "failing_tool"
+        assert error_call[2]["tool"] == "failing_tool"
         assert isinstance(error_call[2]["exception"], ValueError)
 
     async def test_complete_verb_logs(self, mock_backend: MockBackend) -> None:
