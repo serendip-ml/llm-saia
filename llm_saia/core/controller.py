@@ -16,6 +16,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Any, Protocol
 
 from llm_saia.core.classifier import LLMTaskStateClassifier, TaskState
+from llm_saia.core.types import DecisionReason
 
 if TYPE_CHECKING:
     from llm_saia.core.backend import AgentResponse, Message, ToolCall
@@ -34,7 +35,7 @@ class Observation:
     terminal_tool: str | None
 
 
-class ActionKind(Enum):
+class ActionType(Enum):
     """Types of actions the controller can decide."""
 
     EXECUTE_TOOLS = "execute_tools"  # Normal flow - execute tool calls
@@ -48,13 +49,14 @@ class ActionKind(Enum):
 class Action:
     """Action decided by the controller."""
 
-    kind: ActionKind
+    kind: ActionType
+    reason: DecisionReason  # Why this action was chosen
     message: str | None = None  # For INSTRUCT
     output: str | None = None  # For COMPLETE/FAIL
     terminal_data: Any = None  # For COMPLETE via terminal tool
     terminal_tool: str | None = None  # Name of terminal tool if used
     tool_ids_to_execute: list[str] | None = None  # For EXECUTE_TOOLS - None means all
-    reason: str = ""  # Why this action was chosen (for logging)
+    reason_details: str | None = None  # Additional context (e.g., backoff count, classifier output)
 
 
 class LoopController(Protocol):
@@ -159,7 +161,7 @@ class DefaultController:
         # 2. Has tool calls → execute them (reset degenerate counter)
         if obs.response.tool_calls:
             self._consecutive_degenerate = 0
-            return Action(ActionKind.EXECUTE_TOOLS, reason="has_tool_calls")
+            return Action(ActionType.EXECUTE_TOOLS, DecisionReason.HAS_TOOL_CALLS)
 
         # 3. No tool calls → classify and decide
         return await self._handle_no_tools(obs)
@@ -206,9 +208,9 @@ class DefaultController:
         other_calls = [c for c in (obs.response.tool_calls or []) if c.name != obs.terminal_tool]
         if other_calls:
             return Action(
-                ActionKind.EXECUTE_TOOLS,
+                ActionType.EXECUTE_TOOLS,
+                DecisionReason.TERMINAL_WITH_OTHER_TOOLS,
                 tool_ids_to_execute=[c.id for c in other_calls],
-                reason="terminal_with_other_tools",
             )
 
         # Only terminal call - send confirmation request
@@ -217,7 +219,9 @@ class DefaultController:
             f"Please call `{obs.terminal_tool}` again to confirm this is your final answer, "
             "or continue working if you have more to do."
         )
-        return Action(ActionKind.INSTRUCT, message=msg, reason="terminal_confirmation_request")
+        return Action(
+            ActionType.INSTRUCT, DecisionReason.TERMINAL_CONFIRMATION_REQUEST, message=msg
+        )
 
     def _handle_confirmation(self, call: ToolCall, obs: Observation) -> Action:
         """Handle confirmation of terminal tool."""
@@ -232,11 +236,13 @@ class DefaultController:
 
         self._pending_terminal = None
         return Action(
-            ActionKind.FAIL if is_failure else ActionKind.COMPLETE,
+            ActionType.FAIL if is_failure else ActionType.COMPLETE,
+            DecisionReason.TERMINAL_CONFIRMED_FAIL
+            if is_failure
+            else DecisionReason.TERMINAL_CONFIRMED,
             output=output,
             terminal_data=call.arguments,
             terminal_tool=call.name,
-            reason="terminal_confirmed_fail" if is_failure else "terminal_confirmed",
         )
 
     def _handle_contradiction(self, content: str) -> Action:
@@ -245,16 +251,16 @@ class DefaultController:
         if self._confirmation_retries >= self.config.max_confirmation_retries:
             self._pending_terminal = None
             return Action(
-                ActionKind.FAIL,
+                ActionType.FAIL,
+                DecisionReason.CONFIRMATION_RETRIES_EXCEEDED,
                 output=content,
-                reason="confirmation_retries_exceeded",
             )
         msg = (
             "Your response contains contradictory signals - you confirmed completion "
             "but also indicated you want to continue. Please either continue working "
             "using the available tools, or call the terminal tool with a clear final answer."
         )
-        return Action(ActionKind.INSTRUCT, message=msg, reason="contradiction_detected")
+        return Action(ActionType.INSTRUCT, DecisionReason.CONTRADICTION_DETECTED, message=msg)
 
     def _handle_failure_retry(self, arguments: dict[str, Any]) -> Action:
         """Push back on failure status and let the agent retry."""
@@ -266,7 +272,7 @@ class DefaultController:
             f"Please continue working on the task using the available tools. "
             f"Do not give up - try a different approach if needed."
         )
-        return Action(ActionKind.INSTRUCT, message=msg, reason="terminal_failure_retry")
+        return Action(ActionType.INSTRUCT, DecisionReason.TERMINAL_FAILURE_RETRY, message=msg)
 
     def _is_terminal_failure(self, arguments: dict[str, Any]) -> bool:
         """Check if terminal tool arguments indicate failure.
@@ -401,10 +407,11 @@ class DefaultController:
         if self._consecutive_degenerate > self.config.backoff_iterations:
             return await self._classify_and_nudge(obs)
 
-        reason = "empty_response" if self._is_empty_response(obs.response) else "text_tool_pattern"
-        message = _EMPTY_RESPONSE_NUDGE if reason == "empty_response" else _TEXT_TOOL_NUDGE
+        is_empty = self._is_empty_response(obs.response)
+        reason = DecisionReason.EMPTY_RESPONSE if is_empty else DecisionReason.TEXT_TOOL_PATTERN
+        message = _EMPTY_RESPONSE_NUDGE if is_empty else _TEXT_TOOL_NUDGE
         self._last_nudge_iteration = obs.iteration
-        return Action(ActionKind.INSTRUCT, message=message, reason=reason)
+        return Action(ActionType.INSTRUCT, reason, message=message)
 
     async def _classify_and_nudge(self, obs: Observation) -> Action:
         """Classify the response state and decide whether to nudge or backoff."""
@@ -412,24 +419,26 @@ class DefaultController:
 
         if result.state == TaskState.COMPLETED:
             return Action(
-                ActionKind.COMPLETE,
+                ActionType.COMPLETE,
+                DecisionReason.CLASSIFIED_COMPLETE,
                 output=obs.response.content,
-                reason=f"classified_complete:{result.reason}",
             )
 
         # Check backoff
         iterations_since_nudge = obs.iteration - self._last_nudge_iteration
         if iterations_since_nudge < self.config.backoff_iterations:
             return Action(
-                ActionKind.SKIP,
-                reason=f"backoff:{iterations_since_nudge}/{self.config.backoff_iterations}",
+                ActionType.SKIP,
+                DecisionReason.BACKOFF,
+                reason_details=f"{iterations_since_nudge}/{self.config.backoff_iterations}",
             )
 
         # Send nudge
         self._last_nudge_iteration = obs.iteration
         nudge = self.nudges.get(result.state, DEFAULT_NUDGE_FALLBACK)
         return Action(
-            ActionKind.INSTRUCT,
+            ActionType.INSTRUCT,
+            DecisionReason.NUDGE_CLASSIFIED,
             message=nudge,
-            reason=f"nudge:{result.state.value}",
+            reason_details=result.state.value,
         )

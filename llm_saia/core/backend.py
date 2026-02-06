@@ -54,9 +54,10 @@ class AgentResponse:
 
     content: str
     tool_calls: list[ToolCall]
-    stop_reason: str | None = None  # "end_turn", "tool_use", etc.
+    finish_reason: str | None = None  # "end_turn", "tool_use", etc.
     input_tokens: int = 0
     output_tokens: int = 0
+    call_id: str = ""  # Set by SAIA per chat() call for tracing
 
 
 # --- Backend ABC ---

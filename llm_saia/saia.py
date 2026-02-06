@@ -119,6 +119,11 @@ class SAIA:
         """Return new SAIA with retry settings. Shares memory."""
         return self._with_modified_run(max_retries=max_retries, retry_escalation=escalation)
 
+    def with_request_id(self, request_id: str) -> SAIA:
+        """Return new SAIA with a user-provided correlation ID. Shares memory."""
+        new_config = replace(self._config, request_id=request_id)
+        return SAIA(new_config, _memory=self._memory)
+
     # --- Memory Verbs ---
 
     def recall(self, query: str) -> list[Any]:

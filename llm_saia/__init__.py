@@ -13,12 +13,15 @@ from llm_saia.core.errors import (
     TruncatedResponseError,
 )
 from llm_saia.core.logger import Logger, NullLogger
+from llm_saia.core.trace import CallbackTracer, Tracer, TracerFactory
 from llm_saia.core.types import (
     ChooseResult,
     ClassifyResult,
     ConfirmResult,
     Critique,
+    DecisionReason,
     Evidence,
+    LoopScore,
     TaskResult,
     VerbResult,
     VerifyResult,
@@ -54,6 +57,8 @@ __all__ = [
     "VerbResult",
     # Task types
     "AgentResponse",
+    "DecisionReason",
+    "LoopScore",
     "Message",
     "RunConfig",
     "TaskResult",
@@ -62,4 +67,8 @@ __all__ = [
     # Controller / terminal
     "LoopController",
     "TerminalConfig",
+    # Tracing
+    "CallbackTracer",
+    "Tracer",
+    "TracerFactory",
 ]

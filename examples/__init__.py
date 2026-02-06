@@ -1,13 +1,16 @@
-"""Simple OpenAI backend for examples.
+"""Shared utilities for SAIA examples.
 
-This is a minimal implementation of Backend for demonstration purposes.
-Production implementations should live in llm-infer/client.
+Provides an OpenAI-compatible backend, a simple stderr logger, and trace helpers.
+Production backends should live in llm-infer/client.
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
+from collections.abc import Awaitable, Callable
+from io import StringIO
 from typing import Any
 
 import httpx
@@ -19,6 +22,152 @@ from llm_saia.core.backend import (
     ToolCall,
     ToolDef,
 )
+from llm_saia.core.logger import Logger as Logger
+
+# ---------------------------------------------------------------------------
+# Common tool definitions for examples
+# ---------------------------------------------------------------------------
+
+COMMON_TOOLS = [
+    ToolDef(
+        name="read_file",
+        description="Read the contents of a file",
+        parameters={
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "File path to read"}},
+            "required": ["path"],
+        },
+    ),
+    ToolDef(
+        name="list_files",
+        description="List files in a directory",
+        parameters={
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "Directory path"}},
+            "required": ["path"],
+        },
+    ),
+    # Terminal tool - signals task completion but is never executed.
+    # Must be configured via .terminal("report", output_field="analysis") to mark it
+    # as special. When the LLM calls this tool, the controller intercepts it and
+    # requests confirmation rather than executing it. On confirmation, the controller
+    # extracts the "analysis" field and returns it as the final task output.
+    ToolDef(
+        name="report",
+        description="Submit the final analysis report",
+        parameters={
+            "type": "object",
+            "properties": {"analysis": {"type": "string", "description": "The analysis"}},
+            "required": ["analysis"],
+        },
+    ),
+]
+
+
+async def common_executor(name: str, args: dict[str, Any]) -> str:
+    """Execute common tools (read_file, list_files).
+
+    Does not handle terminal tools like 'report' - those are intercepted by
+    SAIA's controller and never reach the executor. Terminal tools must be
+    configured via .terminal() to mark them as special.
+
+    Args:
+        name: Tool name.
+        args: Tool arguments.
+
+    Returns:
+        Tool execution result as string, or error message.
+    """
+    from pathlib import Path
+
+    match name:
+        case "read_file":
+            path = Path(args["path"])
+            if not path.exists():
+                return f"Error: {path} not found"
+            return path.read_text()
+        case "list_files":
+            path = Path(args["path"])
+            if not path.is_dir():
+                return f"Error: {path} is not a directory"
+            return "\n".join(p.name for p in sorted(path.iterdir()) if not p.name.startswith("."))
+        case _:
+            return f"Unknown tool: {name}"
+
+
+def make_executor(
+    *handlers: Callable[[str, dict[str, Any]], Awaitable[str]],
+) -> Callable[[str, dict[str, Any]], Awaitable[str]]:
+    """Create an executor that chains multiple handlers.
+
+    Handlers are tried in order. The first handler that doesn't return
+    "Unknown tool: ..." wins. If all handlers return unknown, the last
+    error is returned.
+
+    Args:
+        *handlers: Async callables with signature (name: str, args: dict) -> str.
+                  If not provided, uses common_executor as default.
+
+    Returns:
+        Async callable that tries handlers in order.
+
+    Example:
+        # Use default common tools only
+        executor = make_executor()
+
+        # Extend with custom tools
+        async def custom_handler(name: str, args: dict[str, Any]) -> str:
+            if name == "custom_tool":
+                return "custom result"
+            return f"Unknown tool: {name}"
+
+        executor = make_executor(custom_handler, common_executor)
+    """
+    if not handlers:
+        handlers = (common_executor,)
+
+    async def executor(name: str, args: dict[str, Any]) -> str:
+        last_error = f"Unknown tool: {name}"
+        for handler in handlers:
+            result = await handler(name, args)
+            if not result.startswith("Unknown tool:"):
+                return result
+            last_error = result
+        return last_error
+
+    return executor
+
+
+class StderrLogger:
+    """Simple logger that prints to stderr. Satisfies the SAIA Logger protocol."""
+
+    def __init__(self, level: str = "debug") -> None:
+        self._levels = ("trace", "debug", "info", "warning", "error")
+        self._min = self._levels.index(level)
+
+    def _log(self, level: str, msg: str, extra: dict[str, Any] | None) -> None:
+        if self._levels.index(level) < self._min:
+            return
+        parts = [f"[{level.upper():7s}] {msg}"]
+        if extra:
+            for k, v in extra.items():
+                parts.append(f"  {k}={v}")
+        print("\n".join(parts), file=sys.stderr)
+
+    def trace(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        self._log("trace", msg, extra)
+
+    def debug(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        self._log("debug", msg, extra)
+
+    def info(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        self._log("info", msg, extra)
+
+    def warning(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        self._log("warning", msg, extra)
+
+    def error(self, msg: str, *, extra: dict[str, Any] | None = None) -> None:
+        self._log("error", msg, extra)
 
 
 class OpenAIBackend(Backend):
@@ -39,7 +188,7 @@ class OpenAIBackend(Backend):
         api_key: str | None = None,
         base_url: str | None = None,
     ):
-        self._model = model or os.environ.get("LLM_MODEL", "gpt-4o-mini")
+        self._model = model or os.environ.get("LLM_MODEL", "qwen3-4b-instruct-2507-awq")
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
         self._base_url = base_url or os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
         self._client = httpx.AsyncClient(timeout=60.0)
@@ -153,7 +302,7 @@ class OpenAIBackend(Backend):
         return AgentResponse(
             content=message.get("content") or "",
             tool_calls=tool_calls,
-            stop_reason=choice.get("finish_reason"),
+            finish_reason=choice.get("finish_reason"),
             input_tokens=usage.get("prompt_tokens", 0),
             output_tokens=usage.get("completion_tokens", 0),
         )
@@ -197,3 +346,55 @@ class OpenAIBackend(Backend):
 
     async def __aexit__(self, *args: Any) -> None:
         await self.close()
+
+
+def print_trace_json(trace_buf: StringIO) -> None:
+    """Print the captured JSONL trace as pretty-printed JSON."""
+    content = trace_buf.getvalue().strip()
+    if not content:
+        print("No trace records captured.")
+        return
+
+    records = [json.loads(line) for line in content.split("\n")]
+    print(json.dumps(records, indent=2))
+
+
+def print_trace_full(record: dict[str, Any]) -> None:
+    """Print each trace record as pretty JSON."""
+    print(json.dumps(record, indent=2))
+
+
+def _format_trace_line(record: dict[str, Any]) -> str:
+    """Format a single trace record as a compact one-liner."""
+    it = record.get("iteration", "?")
+    action = record.get("action", "?")
+    reason = record.get("reason", "")
+    tools = ",".join(record.get("tool_names_used", [])) or "-"
+    tokens = record.get("input_tokens", 0) + record.get("output_tokens", 0)
+    finish = record.get("finish_reason", "?")
+    content_len = len(record.get("content_preview", ""))
+    has_nudge = bool(record.get("nudge_preview"))
+
+    parts = [
+        f"[{it:>2}]",
+        f"{action:<14s}",
+        f"reason={reason:<28s}",
+        f"tools={tools:<12s}",
+        f"tok={tokens:<5}",
+        f"fin={finish}",
+    ]
+    line = " ".join(parts)
+    if has_nudge:
+        line += "  nudge"
+    if content_len:
+        line += f"  content={content_len}ch"
+    return line
+
+
+def print_trace_compact(record: dict[str, Any]) -> None:
+    """Print a single informative line per trace record."""
+    if "_meta" in record:
+        meta = record["_meta"]
+        print(f"--- trace={meta.get('trace_id', '?')} req={meta.get('request_id', '?')} ---")
+        return
+    print(_format_trace_line(record))

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+import uuid
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from typing import TYPE_CHECKING, Any, TypeVar
@@ -16,6 +17,7 @@ from llm_saia.core.schema import dataclass_to_json_schema, parse_json_to_datacla
 if TYPE_CHECKING:
     from llm_saia.core.backend import Backend
     from llm_saia.core.logger import Logger
+    from llm_saia.core.trace import Tracer
 
 T = TypeVar("T")
 
@@ -67,13 +69,14 @@ class Verb(ABC):
             self._lg.debug(
                 "llm response received",
                 extra={
+                    "call_id": response.call_id,
                     "iters": iteration,
                     "tokens": {
                         "input": response.input_tokens,
                         "output": response.output_tokens,
                         "total": total_tokens,
                     },
-                    "stop_reason": response.stop_reason,
+                    "finish_reason": response.finish_reason,
                     "tool_calls": len(response.tool_calls) if response.tool_calls else 0,
                     "preview": self._truncate(response.content, self._PREVIEW_LIMIT),
                 },
@@ -191,35 +194,87 @@ class Verb(ABC):
                 },
             )
 
+    @staticmethod
+    def _generate_id() -> str:
+        """Generate a short unique ID for tracing (8-char hex)."""
+        return uuid.uuid4().hex[:8]
+
+    def _resolve_tracer(
+        self,
+        tracer: Tracer | None,
+        metadata: dict[str, Any],
+    ) -> tuple[bool, Tracer | None]:
+        """Resolve per-call vs config tracer and call start().
+
+        Returns ``(owns_tracer, active_tracer)``.  A per-call tracer is
+        *owned* (the caller is responsible for closing it); the config
+        tracer is *borrowed* (shared across calls, never closed by a verb).
+        """
+        owns = tracer is not None
+        active = tracer or self._config.tracer
+        if active:
+            active.start(metadata)
+        return owns, active
+
+    def _write_base_trace(
+        self,
+        response: AgentResponse,
+        *,
+        trace_id: str,
+        iteration: int = 0,
+        phase: str = "loop",
+    ) -> None:
+        """Write a base trace record if a tracer is configured."""
+        tracer = self._config.tracer
+        if not tracer:
+            return
+        from llm_saia.core.trace import build_base_trace
+
+        record = build_base_trace(
+            response,
+            trace_id=trace_id,
+            iteration=iteration,
+            verb=self.__class__.__name__,
+            phase=phase,
+            request_id=self._config.request_id,
+        )
+        tracer.write(record)
+
     async def _chat(self, messages: list[Message], max_tokens: int | None) -> AgentResponse:
         """Execute a single chat call."""
+        call_id = self._generate_id()
         if self._lg:
             last_msg = messages[-1] if messages else None
             self._lg.trace(
                 "sending chat",
                 extra={
+                    "call_id": call_id,
                     "msg_count": len(messages),
                     "last_role": last_msg.role if last_msg else None,
                     "content": last_msg.content if last_msg else None,
                 },
             )
-        return await self._backend.chat(
+        response = await self._backend.chat(
             messages,
             system=self._config.system,
             tools=self._config.tools if self._config.tools else None,
             max_tokens=max_tokens,
         )
+        response.call_id = call_id
+        return response
 
     async def _loop(
         self,
         prompt: str,
         run: RunConfig | None = None,
         schema: type[T] | None = None,
+        trace_id: str = "",
     ) -> tuple[str, T | None]:
         """Execute prompt with tool-calling loop."""
         config = self._get_run_config(run)
         messages: list[Message] = [Message(role="user", content=prompt)]
         start_time, iteration, total_tokens, last_content = time.monotonic(), 0, 0, ""
+        trace_id = trace_id or self._generate_id()
 
         self._log_loop_start(config)
         max_tokens = config.max_call_tokens if config.max_call_tokens > 0 else None
@@ -231,16 +286,17 @@ class Verb(ABC):
             messages.append(self._to_message(response))
             self._log_response(response, iteration, total_tokens)
             self._check_tool_support(response)
+            self._write_base_trace(response, trace_id=trace_id, iteration=iteration, phase="loop")
 
             if response.tool_calls:
                 await self._execute_tools(response.tool_calls, messages)
                 iteration += 1
             else:
                 self._log_loop_complete(iteration, start_time, total_tokens, response.content)
-                return await self._finalize(prompt, response.content, schema)
+                return await self._finalize(prompt, response.content, schema, trace_id)
 
         self._log_limit_reached(config, iteration, start_time, total_tokens)
-        return await self._finalize(prompt, last_content, schema)
+        return await self._finalize(prompt, last_content, schema, trace_id)
 
     def _should_stop(
         self, config: RunConfig, iteration: int, start_time: float, total_tokens: int
@@ -321,7 +377,7 @@ class Verb(ABC):
             )
 
     async def _finalize(
-        self, prompt: str, content: str, schema: type[T] | None
+        self, prompt: str, content: str, schema: type[T] | None, trace_id: str = ""
     ) -> tuple[str, T | None]:
         """Finalize result, optionally parsing structured output."""
         if schema:
@@ -333,6 +389,8 @@ class Verb(ABC):
                 system=self._config.system,
                 response_schema=json_schema,
             )
+            response.call_id = self._generate_id()
+            self._write_base_trace(response, trace_id=trace_id, phase="finalize")
             try:
                 data = json.loads(response.content)
             except json.JSONDecodeError as e:
@@ -358,10 +416,13 @@ class Verb(ABC):
         if self._has_tools():
             content, _ = await self._loop(prompt)
             return content
+        trace_id = self._generate_id()
         response = await self._backend.chat(
             [Message(role="user", content=prompt)],
             system=self._config.system,
         )
+        response.call_id = self._generate_id()
+        self._write_base_trace(response, trace_id=trace_id, phase="direct")
         return response.content
 
     async def _complete_structured(self, prompt: str, schema: type[T]) -> T:
@@ -371,12 +432,15 @@ class Verb(ABC):
             if result is not None:
                 return result
         # Direct structured completion
+        trace_id = self._generate_id()
         json_schema = dataclass_to_json_schema(schema)
         response = await self._backend.chat(
             [Message(role="user", content=prompt)],
             system=self._config.system,
             response_schema=json_schema,
         )
+        response.call_id = self._generate_id()
+        self._write_base_trace(response, trace_id=trace_id, phase="direct")
         try:
             data = json.loads(response.content)
         except json.JSONDecodeError as e:

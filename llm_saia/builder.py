@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
+from llm_saia.core import trace
 from llm_saia.core.backend import Backend, ToolDef
 from llm_saia.core.config import Config, RunConfig, TerminalConfig
 from llm_saia.core.logger import Logger
@@ -34,6 +35,8 @@ class SAIABuilder:
         self._terminal: TerminalConfig | None = None
         self._lg: Logger | None = None
         self._warn_tool_support: bool = True
+        self._tracer: trace.Tracer | None = None
+        self._request_id: str | None = None
         # RunConfig fields (defaults match RunConfig)
         self._max_iterations: int = 3
         self._max_call_tokens: int = 0
@@ -98,6 +101,15 @@ class SAIABuilder:
         self._lg = lg
         return self
 
+    @property
+    def tracing(self) -> trace.Builder[SAIABuilder]:
+        """Configure iteration tracing destination."""
+        return trace.Builder(self, self._set_tracer)
+
+    def _set_tracer(self, tracer: trace.Tracer) -> None:
+        """Callback for TracerBuilder to set the tracer."""
+        self._tracer = tracer
+
     def warn_tool_support(self, enabled: bool = True) -> SAIABuilder:
         """Enable/disable tool support warnings."""
         self._warn_tool_support = enabled
@@ -129,6 +141,11 @@ class SAIABuilder:
         self._retry_escalation = escalation
         return self
 
+    def request_id(self, request_id: str) -> SAIABuilder:
+        """Set user-provided correlation ID."""
+        self._request_id = request_id
+        return self
+
     def build(self) -> SAIA:
         """Build the SAIA instance.
 
@@ -157,5 +174,7 @@ class SAIABuilder:
             terminal=self._terminal,
             lg=self._lg,
             warn_tool_support=self._warn_tool_support,
+            tracer=self._tracer,
+            request_id=self._request_id,
         )
         return SAIA(config)
