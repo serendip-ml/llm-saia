@@ -707,6 +707,112 @@ class TestDefaultController:
         assert not controller._has_contradiction("Yes, done")
         assert not controller._has_contradiction("")
 
+    def test_backoff_default_is_three(self, mock_backend: MockBackend) -> None:
+        """Default backoff iterations is 3."""
+        from llm_saia.core.controller import ControllerConfig
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        ctrl_config = ControllerConfig(llm_config=config)
+        assert ctrl_config.backoff_iterations == 3
+
+    def test_is_empty_response(self, mock_backend: MockBackend) -> None:
+        """Empty response detected when no content and no tool calls."""
+        from llm_saia.core.controller import ControllerConfig, DefaultController
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+
+        # No content, no tool calls → empty
+        assert controller._is_empty_response(
+            AgentResponse(content="", tool_calls=[], output_tokens=0)
+        )
+        assert controller._is_empty_response(AgentResponse(content="", tool_calls=[]))
+        # Has content → not empty
+        assert not controller._is_empty_response(
+            AgentResponse(content="hello", tool_calls=[], output_tokens=3)
+        )
+        # Has tool calls → not empty
+        assert not controller._is_empty_response(
+            AgentResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="search", arguments={})],
+            )
+        )
+
+    def test_has_text_tool_pattern(self, mock_backend: MockBackend) -> None:
+        """Text tool pattern detected when LLM writes tool names as text."""
+        from llm_saia.core.controller import ControllerConfig, DefaultController
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+
+        assert controller._has_text_tool_pattern("Let me read_file to check")
+        assert controller._has_text_tool_pattern("I'll run_command to see the output")
+        assert controller._has_text_tool_pattern("Using execute(ls)")
+        assert not controller._has_text_tool_pattern("The task is complete")
+        assert not controller._has_text_tool_pattern("")
+
+    async def test_empty_response_bypasses_backoff(self, mock_backend: MockBackend) -> None:
+        """Empty response sends immediate nudge, skipping classifier and backoff."""
+        from llm_saia.core.controller import (
+            ActionKind,
+            ControllerConfig,
+            DefaultController,
+            Observation,
+        )
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+        controller.reset()
+        # Set last nudge to current iteration (normally would cause backoff)
+        controller._last_nudge_iteration = 5
+
+        obs = Observation(
+            response=AgentResponse(content="", tool_calls=[], output_tokens=0),
+            messages=[],
+            iteration=6,  # Only 1 since last nudge — would normally be in backoff
+            task="do something",
+            tool_names=["search"],
+            terminal_tool=None,
+        )
+        action = await controller.decide(obs)
+
+        assert action.kind == ActionKind.INSTRUCT
+        assert action.reason == "empty_response"
+        assert "empty" in action.message.lower()
+
+    async def test_text_tool_pattern_bypasses_backoff(self, mock_backend: MockBackend) -> None:
+        """Text-tool-call pattern sends immediate nudge, skipping classifier and backoff."""
+        from llm_saia.core.controller import (
+            ActionKind,
+            ControllerConfig,
+            DefaultController,
+            Observation,
+        )
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+        controller.reset()
+        controller._last_nudge_iteration = 5
+
+        obs = Observation(
+            response=AgentResponse(
+                content="I'll use read_file to check the config",
+                tool_calls=[],
+                output_tokens=20,
+            ),
+            messages=[],
+            iteration=6,  # Would normally be in backoff
+            task="do something",
+            tool_names=["read_file", "search"],
+            terminal_tool=None,
+        )
+        action = await controller.decide(obs)
+
+        assert action.kind == ActionKind.INSTRUCT
+        assert action.reason == "text_tool_pattern"
+        assert "text" in action.message.lower()
+
 
 class TestTaskStateClassifier:
     """Tests for TaskStateClassifier."""

@@ -85,7 +85,7 @@ class ControllerConfig:
 
     llm_config: Config  # Config for classifier LLM calls
     terminal: TerminalConfig | None = None  # Terminal tool configuration
-    backoff_iterations: int = 5  # Iterations to wait after nudging
+    backoff_iterations: int = 3  # Iterations to wait after nudging
     max_confirmation_retries: int = 3  # Max retries for terminal tool confirmation
     max_failure_retries: int = 1  # Max retries when terminal tool indicates failure
 
@@ -104,6 +104,15 @@ DEFAULT_NUDGES: dict[TaskState, str] = {
 }
 
 DEFAULT_NUDGE_FALLBACK = "Please continue working on the task using the available tools."
+
+# Nudges for degenerate states (bypass backoff and classifier)
+_EMPTY_RESPONSE_NUDGE = (
+    "Your last response was empty. Please use the available tools to continue working on the task."
+)
+_TEXT_TOOL_NUDGE = (
+    "You appear to be writing tool calls as text instead of actually calling them. "
+    "Please use the available tools directly - do not write tool names in your response text."
+)
 
 
 @dataclass
@@ -345,8 +354,52 @@ class DefaultController:
             return True
         return False
 
+    @staticmethod
+    def _is_empty_response(response: AgentResponse) -> bool:
+        """Check if the LLM produced an empty response (no content and no tool calls)."""
+        return not response.content and not response.tool_calls
+
+    def _has_text_tool_pattern(self, content: str) -> bool:
+        """Check if content contains tool names written as text (tool access lost).
+
+        Distinct from _has_contradiction: this is for the no-tool-calls path where
+        the LLM is clearly trying to invoke tools but has lost the ability to make
+        actual tool_use calls.
+        """
+        if not content:
+            return False
+        content_lower = content.lower()
+        return any(p in content_lower for p in self._TEXT_TOOL_PATTERNS)
+
     async def _handle_no_tools(self, obs: Observation) -> Action:
-        """Handle response with no tool calls."""
+        """Handle response with no tool calls.
+
+        Checks for degenerate states (empty response, text-tool patterns) first,
+        bypassing backoff and classifier. Normal responses go through classification
+        and backoff logic.
+        """
+        # Degenerate: empty response (0 output tokens) — nudge immediately
+        if self._is_empty_response(obs.response):
+            self._last_nudge_iteration = obs.iteration
+            return Action(
+                ActionKind.INSTRUCT,
+                message=_EMPTY_RESPONSE_NUDGE,
+                reason="empty_response",
+            )
+
+        # Degenerate: LLM writing tool calls as text — nudge immediately
+        if self._has_text_tool_pattern(obs.response.content):
+            self._last_nudge_iteration = obs.iteration
+            return Action(
+                ActionKind.INSTRUCT,
+                message=_TEXT_TOOL_NUDGE,
+                reason="text_tool_pattern",
+            )
+
+        return await self._classify_and_nudge(obs)
+
+    async def _classify_and_nudge(self, obs: Observation) -> Action:
+        """Classify the response state and decide whether to nudge or backoff."""
         result = await self._classifier.classify(obs.task, obs.response.content, obs.tool_names)
 
         if result.state == TaskState.COMPLETED:
