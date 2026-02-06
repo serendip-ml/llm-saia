@@ -378,9 +378,9 @@ class Complete(Verb):
         consecutive_degenerate = None
         pending_terminal = None
         if isinstance(ctrl, DefaultController):
-            iterations_since_nudge = obs.iteration - ctrl._last_nudge_iteration
-            consecutive_degenerate = ctrl._consecutive_degenerate
-            pending_terminal = ctrl._pending_terminal is not None
+            iterations_since_nudge = obs.iteration - ctrl.iterations_since_last_nudge
+            consecutive_degenerate = ctrl.consecutive_degenerate
+            pending_terminal = ctrl.has_pending_terminal
 
         # Detect if classifier was called
         classifier_called = action.reason in (

@@ -151,6 +151,21 @@ class DefaultController:
         self._failure_retries = 0
         self._consecutive_degenerate = 0
 
+    @property
+    def iterations_since_last_nudge(self) -> int:
+        """Number of iterations since the last nudge was sent."""
+        return self._last_nudge_iteration
+
+    @property
+    def consecutive_degenerate(self) -> int:
+        """Number of consecutive degenerate responses (empty or text-tool patterns)."""
+        return self._consecutive_degenerate
+
+    @property
+    def has_pending_terminal(self) -> bool:
+        """Whether a terminal tool call is pending confirmation."""
+        return self._pending_terminal is not None
+
     async def decide(self, obs: Observation) -> Action:
         """Decide what action to take."""
         # 1. Check for terminal tool

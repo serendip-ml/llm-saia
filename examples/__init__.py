@@ -85,12 +85,18 @@ async def common_executor(name: str, args: dict[str, Any]) -> str:
             path = Path(args["path"])
             if not path.exists():
                 return f"Error: {path} not found"
-            return path.read_text()
+            try:
+                return path.read_text()
+            except (PermissionError, UnicodeDecodeError, OSError) as e:
+                return f"Error reading {path}: {e}"
         case "list_files":
             path = Path(args["path"])
             if not path.is_dir():
                 return f"Error: {path} is not a directory"
-            return "\n".join(p.name for p in sorted(path.iterdir()) if not p.name.startswith("."))
+            try:
+                return "\n".join(p.name for p in sorted(path.iterdir()) if not p.name.startswith("."))
+            except (PermissionError, OSError) as e:
+                return f"Error listing {path}: {e}"
         case _:
             return f"Unknown tool: {name}"
 
@@ -355,8 +361,11 @@ def print_trace_json(trace_buf: StringIO) -> None:
         print("No trace records captured.")
         return
 
-    records = [json.loads(line) for line in content.split("\n")]
-    print(json.dumps(records, indent=2))
+    try:
+        records = [json.loads(line) for line in content.split("\n") if line.strip()]
+        print(json.dumps(records, indent=2))
+    except json.JSONDecodeError as e:
+        print(f"Error parsing trace: {e}", file=sys.stderr)
 
 
 def print_trace_full(record: dict[str, Any]) -> None:
