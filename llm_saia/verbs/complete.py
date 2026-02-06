@@ -4,22 +4,42 @@ from __future__ import annotations
 
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 
 from llm_saia.core.backend import AgentResponse, Message, ToolCall
 from llm_saia.core.config import RunConfig
 from llm_saia.core.controller import (
     Action,
-    ActionKind,
+    ActionType,
     ControllerConfig,
     DefaultController,
     LoopController,
     Observation,
 )
-from llm_saia.core.types import TaskResult
+from llm_saia.core.trace import Tracer, build_trace
+from llm_saia.core.types import DecisionReason, LoopScore, TaskResult
 from llm_saia.core.verb import Verb
 
 # Default run config for complete (unlimited iterations)
 DEFAULT_COMPLETE_RUN = RunConfig(max_iterations=0)
+
+# Reasons that count as productive despite being INSTRUCT
+_PRODUCTIVE_INSTRUCT_REASONS = frozenset({DecisionReason.TERMINAL_CONFIRMATION_REQUEST})
+
+
+@dataclass
+class _LoopCtx:
+    """Mutable loop context bundling iteration state and scoring."""
+
+    task: str
+    trace_id: str
+    ctrl: LoopController
+    tracer: Tracer | None
+    on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None
+    run_config: RunConfig
+    messages: list[Message]
+    tool_names: list[str]
+    acc: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
 
 
 class Complete(Verb):
@@ -30,49 +50,129 @@ class Complete(Verb):
         task: str,
         on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None = None,
         controller: LoopController | None = None,
+        tracer: Tracer | None = None,
     ) -> TaskResult:
-        """Execute a task using tools until completion or limit reached."""
+        """Execute a task using tools until completion or limit reached.
+
+        Args:
+            task: The task description / prompt.
+            on_iteration: Optional async callback invoked each iteration.
+            controller: Custom loop controller (uses default if None).
+            tracer: Per-call tracer (closed on completion). Falls back to
+                config tracer if not provided.
+        """
         if not self._has_tools():
             raise ValueError("Complete requires tools and executor to be configured.")
 
+        trace_id = self._generate_id()
+        request_id = self._config.request_id
         ctrl = controller or self._default_controller()
         ctrl.reset()
 
+        owns_tracer, active_tracer = self._resolve_tracer(
+            tracer,
+            {"trace_id": trace_id, "request_id": request_id, "task": task[:200]},
+        )
+
+        try:
+            result = await self._run_loop(task, trace_id, ctrl, active_tracer, on_iteration)
+            return self._tag_result(result, trace_id, request_id)
+        finally:
+            if active_tracer and owns_tracer:
+                active_tracer.close()
+
+    @staticmethod
+    def _score_action(acc: list[int], action: Action, tokens: int) -> None:
+        """Accumulate scoring stats. acc = [productive, nudges, skips, wasted_tokens]."""
+        is_productive_instruct = action.reason in _PRODUCTIVE_INSTRUCT_REASONS
+        if action.kind in (ActionType.EXECUTE_TOOLS, ActionType.COMPLETE, ActionType.FAIL):
+            acc[0] += 1
+        elif action.kind == ActionType.INSTRUCT and is_productive_instruct:
+            acc[0] += 1
+        elif action.kind == ActionType.INSTRUCT:
+            acc[1] += 1
+            acc[3] += tokens
+        elif action.kind == ActionType.SKIP:
+            acc[2] += 1
+            acc[3] += tokens
+
+    @staticmethod
+    def _build_score(iters: int, total_tokens: int, acc: list[int]) -> LoopScore:
+        """Build LoopScore from accumulated stats."""
+        return LoopScore(iters, acc[0], acc[1], acc[2], total_tokens, acc[3])
+
+    async def _run_loop(
+        self,
+        task: str,
+        trace_id: str,
+        ctrl: LoopController,
+        tracer: Tracer | None,
+        on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None,
+    ) -> TaskResult:
+        """Execute the main tool-calling loop."""
         run_config = self._config.run or DEFAULT_COMPLETE_RUN
-        messages: list[Message] = [Message(role="user", content=task)]
-        start_time, iteration, total_tokens, last_content = time.monotonic(), 0, 0, ""
-        tool_names = [t.name for t in (self._config.tools or [])]
+        ctx = _LoopCtx(
+            task=task,
+            trace_id=trace_id,
+            ctrl=ctrl,
+            tracer=tracer,
+            on_iteration=on_iteration,
+            run_config=run_config,
+            messages=[Message(role="user", content=task)],
+            tool_names=[t.name for t in (self._config.tools or [])],
+        )
         self._log_loop_start(run_config)
+        start_time, iteration, total_tokens, last_content = time.monotonic(), 0, 0, ""
 
         while not self._should_stop(run_config, iteration, start_time, total_tokens):
-            response, tokens = await self._run_iteration(messages, run_config)
+            result, tokens, last_content = await self._run_one_iteration(ctx, iteration)
             total_tokens += tokens
-            last_content = response.content
-
-            result = await self._process_iteration(
-                response, messages, iteration, total_tokens, task, tool_names, ctrl, on_iteration
-            )
             if result:
                 self._log_loop_complete(iteration, start_time, total_tokens, result.output or "")
+                result.score = self._build_score(iteration + 1, total_tokens, ctx.acc)
                 return result
             iteration += 1
 
         self._log_limit_reached(run_config, iteration, start_time, total_tokens)
-        return TaskResult(False, last_content, iteration, messages)
+        result = TaskResult(False, last_content, iteration, ctx.messages)
+        result.score = self._build_score(iteration, total_tokens, ctx.acc)
+        return result
+
+    async def _run_one_iteration(
+        self,
+        ctx: _LoopCtx,
+        iteration: int,
+    ) -> tuple[TaskResult | None, int, str]:
+        """Run one loop iteration. Returns (result, tokens, last_content)."""
+        response, tokens = await self._run_iteration(ctx.messages, ctx.run_config)
+        self._log_response(response, iteration, tokens)
+        action, result = await self._process_iteration(
+            response,
+            ctx.messages,
+            iteration,
+            ctx.task,
+            ctx.tool_names,
+            ctx.ctrl,
+            ctx.on_iteration,
+            ctx.tracer,
+            ctx.trace_id,
+        )
+        self._score_action(ctx.acc, action, tokens)
+        return result, tokens, response.content
 
     async def _process_iteration(
         self,
         response: AgentResponse,
         messages: list[Message],
         iteration: int,
-        total_tokens: int,
         task: str,
         tool_names: list[str],
         ctrl: LoopController,
         on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None,
-    ) -> TaskResult | None:
-        """Process a single iteration: log, callback, decide, execute."""
-        self._log_response(response, iteration, total_tokens)
+        tracer: Tracer | None = None,
+        trace_id: str = "",
+    ) -> tuple[Action, TaskResult | None]:
+        """Process a single iteration: callback, decide, execute, trace."""
         self._check_tool_support(response)
 
         if on_iteration:
@@ -90,7 +190,11 @@ class Complete(Verb):
         action = await ctrl.decide(obs)
         self._log_action(action)
 
-        return await self._execute_action(action, response, messages, iteration)
+        if tracer:
+            self._write_trace(tracer, obs, action, response, ctrl, trace_id)
+
+        result = await self._execute_action(action, response, messages, iteration)
+        return action, result
 
     def _default_controller(self) -> DefaultController:
         """Create default controller with config from this verb."""
@@ -133,28 +237,28 @@ class Complete(Verb):
     ) -> TaskResult | None:
         """Execute the action decided by the controller."""
         match action.kind:
-            case ActionKind.EXECUTE_TOOLS:
+            case ActionType.EXECUTE_TOOLS:
                 await self._execute_tool_action(action, response, messages)
                 return None
 
-            case ActionKind.INSTRUCT:
+            case ActionType.INSTRUCT:
                 self._add_response_if_needed(messages, response)
                 self._ack_response_tools(response, messages)
                 if action.message:
                     messages.append(Message(role="user", content=action.message))
                 return None
 
-            case ActionKind.SKIP:
+            case ActionType.SKIP:
                 self._add_response_if_needed(messages, response)
                 self._ack_response_tools(response, messages)
                 messages.append(Message(role="user", content="Continue."))
                 return None
 
-            case ActionKind.COMPLETE:
+            case ActionType.COMPLETE:
                 self._add_response_if_needed(messages, response)
                 return self._make_result(True, action, response, messages, iteration)
 
-            case ActionKind.FAIL:
+            case ActionType.FAIL:
                 self._add_response_if_needed(messages, response)
                 return self._make_result(False, action, response, messages, iteration)
 
@@ -242,10 +346,59 @@ class Complete(Verb):
             terminal_tool=action.terminal_tool,
         )
 
+    @staticmethod
+    def _tag_result(result: TaskResult, trace_id: str, request_id: str | None) -> TaskResult:
+        """Attach tracing IDs to a TaskResult."""
+        result.trace_id = trace_id
+        result.request_id = request_id
+        return result
+
     def _log_action(self, action: Action) -> None:
         """Log the controller's decision."""
         if self._lg:
             self._lg.debug(
                 "controller_action",
-                extra={"kind": action.kind.value, "reason": action.reason},
+                extra={"kind": action.kind.value, "reason": action.reason.value},
             )
+
+    # --- Trace helpers ---
+
+    def _write_trace(
+        self,
+        tracer: Tracer,
+        obs: Observation,
+        action: Action,
+        response: AgentResponse,
+        ctrl: LoopController,
+        trace_id: str,
+    ) -> None:
+        """Write one iteration trace record."""
+        # Extract controller internals if available (DefaultController exposes these)
+        iterations_since_nudge = None
+        consecutive_degenerate = None
+        pending_terminal = None
+        if isinstance(ctrl, DefaultController):
+            iterations_since_nudge = obs.iteration - ctrl.iterations_since_last_nudge
+            consecutive_degenerate = ctrl.consecutive_degenerate
+            pending_terminal = ctrl.has_pending_terminal
+
+        # Detect if classifier was called
+        classifier_called = action.reason in (
+            DecisionReason.CLASSIFIED_COMPLETE,
+            DecisionReason.NUDGE_CLASSIFIED,
+        )
+
+        record = build_trace(
+            obs,
+            action,
+            response,
+            trace_id=trace_id,
+            verb="Complete",
+            phase="loop",
+            request_id=self._config.request_id,
+            classifier_called=classifier_called,
+            iterations_since_nudge=iterations_since_nudge,
+            consecutive_degenerate=consecutive_degenerate,
+            pending_terminal=pending_terminal,
+        )
+        tracer.write(record)

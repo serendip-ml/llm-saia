@@ -10,6 +10,7 @@ if TYPE_CHECKING:
 
     from llm_saia.core.backend import Backend, ToolDef
     from llm_saia.core.logger import Logger
+    from llm_saia.core.trace import Tracer
 
 __all__ = [
     "RunConfig",
@@ -82,6 +83,8 @@ class Config:
     terminal: TerminalConfig | None = None  # Terminal tool configuration
     lg: Logger | None = None
     warn_tool_support: bool = True
+    tracer: Tracer | None = None  # Default tracer for iteration tracing
+    request_id: str | None = None  # User-provided correlation ID
 
 
 # Default run config used when none provided

@@ -130,7 +130,7 @@ class MockBackend(Backend):
 
     def _make_response(self, content: str) -> AgentResponse:
         """Create a simple AgentResponse with given content."""
-        return AgentResponse(content=content, tool_calls=[], stop_reason="end_turn")
+        return AgentResponse(content=content, tool_calls=[], finish_reason="end_turn")
 
     async def chat(
         self,

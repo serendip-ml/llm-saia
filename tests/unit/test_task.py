@@ -8,6 +8,7 @@ from llm_saia.core.config import Config
 from llm_saia.core.types import (
     AgentResponse,
     ClassifyResult,
+    DecisionReason,
     RunConfig,
     ToolCall,
     ToolDef,
@@ -55,7 +56,7 @@ class TestTask:
         saia = make_saia(mock_backend, tools=sample_tools, executor=dummy_executor)
 
         mock_backend.queue_tool_response(
-            AgentResponse(content="Task completed!", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Task completed!", tool_calls=[], finish_reason="end_turn")
         )
         mock_backend.set_structured_response(
             ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Done")
@@ -84,11 +85,11 @@ class TestTask:
             AgentResponse(
                 content="Let me search for that.",
                 tool_calls=[ToolCall(id="call_1", name="search", arguments={"query": "python"})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         mock_backend.queue_tool_response(
-            AgentResponse(content="Found it. Done.", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Found it. Done.", tool_calls=[], finish_reason="end_turn")
         )
         mock_backend.set_structured_response(
             ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Done")
@@ -108,10 +109,10 @@ class TestTask:
         saia = make_saia(mock_backend, tools=sample_tools, executor=dummy_executor)
 
         mock_backend.queue_tool_response(
-            AgentResponse(content="I started...", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="I started...", tool_calls=[], finish_reason="end_turn")
         )
         mock_backend.queue_tool_response(
-            AgentResponse(content="Now I finished!", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Now I finished!", tool_calls=[], finish_reason="end_turn")
         )
 
         # First call returns wants_continue, second returns completed
@@ -140,7 +141,7 @@ class TestTask:
 
         for _ in range(5):
             mock_backend.queue_tool_response(
-                AgentResponse(content="Still working...", tool_calls=[], stop_reason="end_turn")
+                AgentResponse(content="Still working...", tool_calls=[], finish_reason="end_turn")
             )
         mock_backend.set_structured_response(
             ClassifyResult,
@@ -160,7 +161,7 @@ class TestTask:
         iterations_seen: list[int] = []
 
         mock_backend.queue_tool_response(
-            AgentResponse(content="Done!", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Done!", tool_calls=[], finish_reason="end_turn")
         )
         mock_backend.set_structured_response(
             ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Complete")
@@ -188,11 +189,11 @@ class TestTask:
             AgentResponse(
                 content="Let me try this tool.",
                 tool_calls=[ToolCall(id="call_1", name="search", arguments={"query": "test"})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         mock_backend.queue_tool_response(
-            AgentResponse(content="Tool failed, but done.", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Tool failed, but done.", tool_calls=[], finish_reason="end_turn")
         )
         mock_backend.set_structured_response(
             ClassifyResult,
@@ -232,7 +233,7 @@ class TestTask:
         # Queue enough responses for multiple iterations
         for _ in range(10):
             mock_backend.queue_tool_response(
-                AgentResponse(content="Working...", tool_calls=[], stop_reason="end_turn")
+                AgentResponse(content="Working...", tool_calls=[], finish_reason="end_turn")
             )
         mock_backend.set_structured_response(
             ClassifyResult,
@@ -255,10 +256,10 @@ class TestTask:
         # Queue 5 "not done" responses, then one "done"
         for _ in range(5):
             mock_backend.queue_tool_response(
-                AgentResponse(content="Working...", tool_calls=[], stop_reason="end_turn")
+                AgentResponse(content="Working...", tool_calls=[], finish_reason="end_turn")
             )
         mock_backend.queue_tool_response(
-            AgentResponse(content="Done!", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Done!", tool_calls=[], finish_reason="end_turn")
         )
 
         # Queue 5 "wants_continue" responses, then one "completed"
@@ -310,7 +311,7 @@ class TestTask:
                         arguments={"summary": "Successfully completed the search"},
                     )
                 ],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # Second: LLM confirms by calling terminal tool again
@@ -324,7 +325,7 @@ class TestTask:
                         arguments={"summary": "Successfully completed the search"},
                     )
                 ],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
 
@@ -366,7 +367,7 @@ class TestTask:
             AgentResponse(
                 content="Done",
                 tool_calls=[ToolCall(id="call_1", name="finish", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # Second: LLM confirms by calling terminal tool again
@@ -374,7 +375,7 @@ class TestTask:
             AgentResponse(
                 content="Confirmed",
                 tool_calls=[ToolCall(id="call_2", name="finish", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
 
@@ -417,7 +418,7 @@ class TestTask:
                     ToolCall(id="call_1", name="search", arguments={"query": "test"}),
                     ToolCall(id="call_2", name="finish", arguments={}),
                 ],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # LLM confirms terminal tool
@@ -425,7 +426,7 @@ class TestTask:
             AgentResponse(
                 content="Confirmed",
                 tool_calls=[ToolCall(id="call_3", name="finish", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
 
@@ -467,7 +468,7 @@ class TestTask:
             AgentResponse(
                 content="Done",
                 tool_calls=[ToolCall(id="call_1", name="finish", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # Second: After seeing confirmation prompt, LLM decides to continue working
@@ -475,7 +476,7 @@ class TestTask:
             AgentResponse(
                 content="Actually, let me search first",
                 tool_calls=[ToolCall(id="call_2", name="search", arguments={"query": "more"})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # Third: Now LLM calls terminal tool again
@@ -483,7 +484,7 @@ class TestTask:
             AgentResponse(
                 content="Now done",
                 tool_calls=[ToolCall(id="call_3", name="finish", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # Fourth: LLM confirms
@@ -491,7 +492,7 @@ class TestTask:
             AgentResponse(
                 content="Confirmed",
                 tool_calls=[ToolCall(id="call_4", name="finish", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
 
@@ -516,7 +517,7 @@ class TestTask:
         )
 
         mock_backend.queue_tool_response(
-            AgentResponse(content="Task done!", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Task done!", tool_calls=[], finish_reason="end_turn")
         )
         mock_backend.set_structured_response(
             ClassifyResult,
@@ -557,7 +558,7 @@ class TestTask:
             AgentResponse(
                 content="Done",
                 tool_calls=[ToolCall(id="call_1", name="finish", arguments=non_serializable_args)],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # Second: LLM confirms
@@ -565,7 +566,7 @@ class TestTask:
             AgentResponse(
                 content="Confirmed",
                 tool_calls=[ToolCall(id="call_2", name="finish", arguments=non_serializable_args)],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
 
@@ -598,7 +599,7 @@ class TestTask:
             AgentResponse(
                 content="Done",
                 tool_calls=[ToolCall(id="call_1", name="finish", arguments={"output": "ok"})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # Second: LLM confirms
@@ -606,7 +607,7 @@ class TestTask:
             AgentResponse(
                 content="Confirmed",
                 tool_calls=[ToolCall(id="call_2", name="finish", arguments={"output": "ok"})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
 
@@ -662,7 +663,7 @@ class TestTask:
                         id="c1", name="finish", arguments={"status": "stuck", "reason": "blocked"}
                     )
                 ],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         # Confirmation: same failure
@@ -674,7 +675,7 @@ class TestTask:
                         id="c2", name="finish", arguments={"status": "stuck", "reason": "blocked"}
                     )
                 ],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
 
@@ -764,7 +765,7 @@ class TestDefaultController:
     async def test_empty_response_bypasses_backoff(self, mock_backend: MockBackend) -> None:
         """Empty response sends immediate nudge, skipping classifier and backoff."""
         from llm_saia.core.controller import (
-            ActionKind,
+            ActionType,
             ControllerConfig,
             DefaultController,
             Observation,
@@ -786,14 +787,14 @@ class TestDefaultController:
         )
         action = await controller.decide(obs)
 
-        assert action.kind == ActionKind.INSTRUCT
-        assert action.reason == "empty_response"
+        assert action.kind == ActionType.INSTRUCT
+        assert action.reason == DecisionReason.EMPTY_RESPONSE
         assert "empty" in action.message.lower()
 
     async def test_text_tool_pattern_bypasses_backoff(self, mock_backend: MockBackend) -> None:
         """Text-tool-call pattern sends immediate nudge, skipping classifier and backoff."""
         from llm_saia.core.controller import (
-            ActionKind,
+            ActionType,
             ControllerConfig,
             DefaultController,
             Observation,
@@ -818,14 +819,14 @@ class TestDefaultController:
         )
         action = await controller.decide(obs)
 
-        assert action.kind == ActionKind.INSTRUCT
-        assert action.reason == "text_tool_pattern"
+        assert action.kind == ActionType.INSTRUCT
+        assert action.reason == DecisionReason.TEXT_TOOL_PATTERN
         assert "text" in action.message.lower()
 
     async def test_degenerate_falls_through_after_limit(self, mock_backend: MockBackend) -> None:
         """After backoff_iterations consecutive degenerate nudges, falls through to classifier."""
         from llm_saia.core.controller import (
-            ActionKind,
+            ActionType,
             ControllerConfig,
             DefaultController,
             Observation,
@@ -848,24 +849,24 @@ class TestDefaultController:
 
         # First 2 degenerate responses → nudge (within limit)
         a1 = await controller.decide(make_obs(1))
-        assert a1.kind == ActionKind.INSTRUCT
-        assert a1.reason == "empty_response"
+        assert a1.kind == ActionType.INSTRUCT
+        assert a1.reason == DecisionReason.EMPTY_RESPONSE
 
         a2 = await controller.decide(make_obs(2))
-        assert a2.kind == ActionKind.INSTRUCT
-        assert a2.reason == "empty_response"
+        assert a2.kind == ActionType.INSTRUCT
+        assert a2.reason == DecisionReason.EMPTY_RESPONSE
 
         # 3rd consecutive → exceeds backoff_iterations=2, falls through to classifier.
         # Classifier returns WANTS_CONTINUE (default mock), and since the last nudge
         # was on iteration 2, backoff window still active → SKIP.
         a3 = await controller.decide(make_obs(3))
-        assert a3.kind == ActionKind.SKIP
-        assert "backoff" in a3.reason
+        assert a3.kind == ActionType.SKIP
+        assert a3.reason == DecisionReason.BACKOFF
 
     async def test_degenerate_counter_resets_on_tool_calls(self, mock_backend: MockBackend) -> None:
         """Consecutive degenerate counter resets when LLM makes real tool calls."""
         from llm_saia.core.controller import (
-            ActionKind,
+            ActionType,
             ControllerConfig,
             DefaultController,
             Observation,
@@ -886,8 +887,8 @@ class TestDefaultController:
             terminal_tool=None,
         )
         a1 = await controller.decide(obs_empty)
-        assert a1.kind == ActionKind.INSTRUCT
-        assert a1.reason == "empty_response"
+        assert a1.kind == ActionType.INSTRUCT
+        assert a1.reason == DecisionReason.EMPTY_RESPONSE
 
         # LLM recovers — makes a tool call
         obs_tools = Observation(
@@ -903,7 +904,7 @@ class TestDefaultController:
             terminal_tool=None,
         )
         a2 = await controller.decide(obs_tools)
-        assert a2.kind == ActionKind.EXECUTE_TOOLS
+        assert a2.kind == ActionType.EXECUTE_TOOLS
 
         # Another degenerate — counter was reset, so should nudge again (not fall through)
         obs_empty2 = Observation(
@@ -915,8 +916,8 @@ class TestDefaultController:
             terminal_tool=None,
         )
         a3 = await controller.decide(obs_empty2)
-        assert a3.kind == ActionKind.INSTRUCT
-        assert a3.reason == "empty_response"
+        assert a3.kind == ActionType.INSTRUCT
+        assert a3.reason == DecisionReason.EMPTY_RESPONSE
 
 
 class TestTaskStateClassifier:
@@ -972,3 +973,99 @@ class TestTaskStateClassifier:
         result = await classifier.classify("do something", "Response", [])
 
         assert result.state == TaskState.WANTS_CONTINUE
+
+
+class TestLoopScore:
+    """Tests for LoopScore computation on TaskResult."""
+
+    async def test_score_on_clean_completion(
+        self, mock_backend: MockBackend, sample_tools: list[ToolDef]
+    ) -> None:
+        """Score reflects perfect quality when no nudges needed."""
+        saia = make_saia(mock_backend, tools=sample_tools, executor=dummy_executor)
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="search", arguments={"query": "x"})],
+                finish_reason="tool_use",
+            )
+        )
+        mock_backend.queue_tool_response(
+            AgentResponse(content="Done.", tool_calls=[], finish_reason="end_turn")
+        )
+        mock_backend.set_structured_response(
+            ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Done")
+        )
+
+        result = await saia.complete(task="test")
+
+        assert result.score is not None
+        assert result.score.quality == 1.0
+        assert result.score.nudges == 0
+        assert result.score.skips == 0
+        assert result.score.productive == result.score.iterations
+
+    async def test_score_on_limit_reached(
+        self, mock_backend: MockBackend, sample_tools: list[ToolDef]
+    ) -> None:
+        """Score is attached even when loop hits iteration limit."""
+        saia = make_saia(mock_backend, tools=sample_tools, executor=dummy_executor)
+        saia = saia.with_run_config(RunConfig(max_iterations=1))
+        mock_backend.queue_tool_response(
+            AgentResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="search", arguments={"query": "x"})],
+                finish_reason="tool_use",
+            )
+        )
+
+        result = await saia.complete(task="test")
+
+        assert result.completed is False
+        assert result.score is not None
+        assert result.score.iterations == 1
+        assert result.score.productive == 1
+
+    def test_loop_score_properties(self) -> None:
+        """LoopScore computed properties are correct."""
+        from llm_saia.core.types import LoopScore
+
+        score = LoopScore(
+            iterations=10,
+            productive=8,
+            nudges=1,
+            skips=1,
+            total_tokens=1000,
+            wasted_tokens=200,
+        )
+        assert score.quality == 0.8
+        assert score.token_efficiency == 0.8
+
+    def test_loop_score_empty(self) -> None:
+        """LoopScore handles zero iterations gracefully."""
+        from llm_saia.core.types import LoopScore
+
+        score = LoopScore(
+            iterations=0,
+            productive=0,
+            nudges=0,
+            skips=0,
+            total_tokens=0,
+            wasted_tokens=0,
+        )
+        assert score.quality == 1.0
+        assert score.token_efficiency == 1.0
+
+    def test_loop_score_repr(self) -> None:
+        """LoopScore repr is concise."""
+        from llm_saia.core.types import LoopScore
+
+        score = LoopScore(
+            iterations=6,
+            productive=5,
+            nudges=1,
+            skips=0,
+            total_tokens=1000,
+            wasted_tokens=100,
+        )
+        assert repr(score) == "quality=0.83 token_eff=0.90"

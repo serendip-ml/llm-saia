@@ -110,11 +110,11 @@ class TestLoggerIntegration:
             AgentResponse(
                 content="calling tool",
                 tool_calls=[ToolCall(id="1", name="test_tool", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         mock_backend.queue_response(
-            AgentResponse(content="done", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="done", tool_calls=[], finish_reason="end_turn")
         )
 
         await saia.instruct("do something")
@@ -141,7 +141,7 @@ class TestLoggerIntegration:
                 AgentResponse(
                     content="calling tool",
                     tool_calls=[ToolCall(id="1", name="test_tool", arguments={})],
-                    stop_reason="tool_use",
+                    finish_reason="tool_use",
                 )
             )
 
@@ -170,11 +170,11 @@ class TestLoggerIntegration:
             AgentResponse(
                 content="calling tool",
                 tool_calls=[ToolCall(id="1", name="failing_tool", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         mock_backend.queue_response(
-            AgentResponse(content="done", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="done", tool_calls=[], finish_reason="end_turn")
         )
 
         await saia.instruct("do something")
@@ -203,7 +203,7 @@ class TestLoggerIntegration:
                 AgentResponse(
                     content="calling tool",
                     tool_calls=[ToolCall(id="1", name="test_tool", arguments={})],
-                    stop_reason="tool_use",
+                    finish_reason="tool_use",
                 )
             )
 
@@ -237,11 +237,11 @@ class TestLoggerIntegration:
             AgentResponse(
                 content="calling tool",
                 tool_calls=[ToolCall(id="1", name="test_tool", arguments={})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         mock_backend.queue_response(
-            AgentResponse(content="task done", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="task done", tool_calls=[], finish_reason="end_turn")
         )
         mock_backend.set_structured_response(
             ClassifyResult, ClassifyResult(category="completed", confidence=1.0, reason="Done")
@@ -274,7 +274,7 @@ class TestLoggerIntegration:
             AgentResponse(
                 content=f"I will search for that. {fake_tool_json}",
                 tool_calls=[],
-                stop_reason="end_turn",
+                finish_reason="end_turn",
             )
         )
 
@@ -301,11 +301,11 @@ class TestLoggerIntegration:
             AgentResponse(
                 content="Searching...",
                 tool_calls=[ToolCall(id="1", name="search", arguments={"query": "test"})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
             )
         )
         mock_backend.queue_response(
-            AgentResponse(content="Found results", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Found results", tool_calls=[], finish_reason="end_turn")
         )
 
         await saia.instruct("search for something")
@@ -332,7 +332,7 @@ class TestLoggerIntegration:
             AgentResponse(
                 content="I don't have tools",
                 tool_calls=[],
-                stop_reason="end_turn",
+                finish_reason="end_turn",
                 input_tokens=10,  # Suspiciously low for 1 tool (expected >= 50)
             )
         )
@@ -360,12 +360,12 @@ class TestLoggerIntegration:
             AgentResponse(
                 content="",
                 tool_calls=[ToolCall(id="1", name="search", arguments={"query": "test"})],
-                stop_reason="tool_use",
+                finish_reason="tool_use",
                 input_tokens=10,  # Low, but tools work so no warning
             )
         )
         mock_backend.queue_response(
-            AgentResponse(content="Found results", tool_calls=[], stop_reason="end_turn")
+            AgentResponse(content="Found results", tool_calls=[], finish_reason="end_turn")
         )
 
         await saia.instruct("search for something")
