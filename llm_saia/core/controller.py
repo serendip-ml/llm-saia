@@ -217,7 +217,7 @@ class DefaultController:
 
     def _handle_confirmation(self, call: ToolCall, obs: Observation) -> Action:
         """Handle confirmation of terminal tool."""
-        if self._has_contradiction(obs.response.content):
+        if self._has_contradiction(obs.response.content, obs.tool_names):
             return self._handle_contradiction(obs.response.content)
 
         output = self._extract_terminal_output(call.arguments, obs.response.content)
@@ -338,7 +338,7 @@ class DefaultController:
         "list_files",
     )
 
-    def _has_contradiction(self, content: str) -> bool:
+    def _has_contradiction(self, content: str, tool_names: list[str] | None = None) -> bool:
         """Check if content has continuation signals (contradiction).
 
         Detects two categories:
@@ -350,26 +350,25 @@ class DefaultController:
         content_lower = content.lower()
         if any(s in content_lower for s in self._CONTINUATION_SIGNALS):
             return True
-        if any(p in content_lower for p in self._TEXT_TOOL_PATTERNS):
-            return True
-        return False
+        return self._has_text_tool_pattern(content, tool_names or [])
 
     @staticmethod
     def _is_empty_response(response: AgentResponse) -> bool:
         """Check if the LLM produced an empty response (no content and no tool calls)."""
         return not response.content and not response.tool_calls
 
-    def _has_text_tool_pattern(self, content: str) -> bool:
+    def _has_text_tool_pattern(self, content: str, tool_names: list[str]) -> bool:
         """Check if content contains tool names written as text (tool access lost).
 
-        Distinct from _has_contradiction: this is for the no-tool-calls path where
-        the LLM is clearly trying to invoke tools but has lost the ability to make
-        actual tool_use calls.
+        Matches against actual tool names provided to the agent, avoiding false
+        positives from hardcoded patterns like ``"shell "``.  Falls back to the
+        static ``_TEXT_TOOL_PATTERNS`` when no tool names are available.
         """
         if not content:
             return False
         content_lower = content.lower()
-        return any(p in content_lower for p in self._TEXT_TOOL_PATTERNS)
+        patterns = [t.lower() for t in tool_names] if tool_names else self._TEXT_TOOL_PATTERNS
+        return any(p in content_lower for p in patterns)
 
     async def _handle_no_tools(self, obs: Observation) -> Action:
         """Handle response with no tool calls.
@@ -388,7 +387,7 @@ class DefaultController:
             )
 
         # Degenerate: LLM writing tool calls as text — nudge immediately
-        if self._has_text_tool_pattern(obs.response.content):
+        if self._has_text_tool_pattern(obs.response.content, obs.tool_names):
             self._last_nudge_iteration = obs.iteration
             return Action(
                 ActionKind.INSTRUCT,

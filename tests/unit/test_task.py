@@ -746,11 +746,18 @@ class TestDefaultController:
         config = Config(backend=mock_backend, tools=[], executor=None, system=None)
         controller = DefaultController(config=ControllerConfig(llm_config=config))
 
-        assert controller._has_text_tool_pattern("Let me read_file to check")
-        assert controller._has_text_tool_pattern("I'll run_command to see the output")
-        assert controller._has_text_tool_pattern("Using execute(ls)")
-        assert not controller._has_text_tool_pattern("The task is complete")
-        assert not controller._has_text_tool_pattern("")
+        tools = ["read_file", "run_command", "execute", "search"]
+        # Matches actual tool names in content
+        assert controller._has_text_tool_pattern("Let me read_file to check", tools)
+        assert controller._has_text_tool_pattern("I'll run_command to see the output", tools)
+        assert controller._has_text_tool_pattern("Using execute(ls)", tools)
+        # No match — "shell" is not in tool_names
+        assert not controller._has_text_tool_pattern("I need a shell script", tools)
+        # Clean content
+        assert not controller._has_text_tool_pattern("The task is complete", tools)
+        assert not controller._has_text_tool_pattern("", tools)
+        # Falls back to static patterns when tool_names is empty
+        assert controller._has_text_tool_pattern("Let me read_file to check", [])
 
     async def test_empty_response_bypasses_backoff(self, mock_backend: MockBackend) -> None:
         """Empty response sends immediate nudge, skipping classifier and backoff."""
