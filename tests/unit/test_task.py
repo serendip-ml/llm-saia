@@ -707,6 +707,217 @@ class TestDefaultController:
         assert not controller._has_contradiction("Yes, done")
         assert not controller._has_contradiction("")
 
+    def test_backoff_default_is_three(self, mock_backend: MockBackend) -> None:
+        """Default backoff iterations is 3."""
+        from llm_saia.core.controller import ControllerConfig
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        ctrl_config = ControllerConfig(llm_config=config)
+        assert ctrl_config.backoff_iterations == 3
+
+    def test_is_empty_response(self, mock_backend: MockBackend) -> None:
+        """Empty response detected when no content and no tool calls."""
+        from llm_saia.core.controller import ControllerConfig, DefaultController
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+
+        # No content, no tool calls → empty
+        assert controller._is_empty_response(
+            AgentResponse(content="", tool_calls=[], output_tokens=0)
+        )
+        assert controller._is_empty_response(AgentResponse(content="", tool_calls=[]))
+        # Has content → not empty
+        assert not controller._is_empty_response(
+            AgentResponse(content="hello", tool_calls=[], output_tokens=3)
+        )
+        # Has tool calls → not empty
+        assert not controller._is_empty_response(
+            AgentResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="search", arguments={})],
+            )
+        )
+
+    def test_has_text_tool_pattern(self, mock_backend: MockBackend) -> None:
+        """Text tool pattern detected when LLM writes tool names as text."""
+        from llm_saia.core.controller import ControllerConfig, DefaultController
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+
+        tools = ["read_file", "run_command", "execute", "search"]
+        # Matches actual tool names in content
+        assert controller._has_text_tool_pattern("Let me read_file to check", tools)
+        assert controller._has_text_tool_pattern("I'll run_command to see the output", tools)
+        assert controller._has_text_tool_pattern("Using execute(ls)", tools)
+        # No match — "shell" is not in tool_names
+        assert not controller._has_text_tool_pattern("I need a shell script", tools)
+        # No match — word-boundary prevents "search" matching inside "research"
+        assert not controller._has_text_tool_pattern("I'll research the best approach", tools)
+        # Clean content
+        assert not controller._has_text_tool_pattern("The task is complete", tools)
+        assert not controller._has_text_tool_pattern("", tools)
+        # Falls back to static patterns when tool_names is empty
+        assert controller._has_text_tool_pattern("Let me read_file to check", [])
+
+    async def test_empty_response_bypasses_backoff(self, mock_backend: MockBackend) -> None:
+        """Empty response sends immediate nudge, skipping classifier and backoff."""
+        from llm_saia.core.controller import (
+            ActionKind,
+            ControllerConfig,
+            DefaultController,
+            Observation,
+        )
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+        controller.reset()
+        # Set last nudge to current iteration (normally would cause backoff)
+        controller._last_nudge_iteration = 5
+
+        obs = Observation(
+            response=AgentResponse(content="", tool_calls=[], output_tokens=0),
+            messages=[],
+            iteration=6,  # Only 1 since last nudge — would normally be in backoff
+            task="do something",
+            tool_names=["search"],
+            terminal_tool=None,
+        )
+        action = await controller.decide(obs)
+
+        assert action.kind == ActionKind.INSTRUCT
+        assert action.reason == "empty_response"
+        assert "empty" in action.message.lower()
+
+    async def test_text_tool_pattern_bypasses_backoff(self, mock_backend: MockBackend) -> None:
+        """Text-tool-call pattern sends immediate nudge, skipping classifier and backoff."""
+        from llm_saia.core.controller import (
+            ActionKind,
+            ControllerConfig,
+            DefaultController,
+            Observation,
+        )
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        controller = DefaultController(config=ControllerConfig(llm_config=config))
+        controller.reset()
+        controller._last_nudge_iteration = 5
+
+        obs = Observation(
+            response=AgentResponse(
+                content="I'll use read_file to check the config",
+                tool_calls=[],
+                output_tokens=20,
+            ),
+            messages=[],
+            iteration=6,  # Would normally be in backoff
+            task="do something",
+            tool_names=["read_file", "search"],
+            terminal_tool=None,
+        )
+        action = await controller.decide(obs)
+
+        assert action.kind == ActionKind.INSTRUCT
+        assert action.reason == "text_tool_pattern"
+        assert "text" in action.message.lower()
+
+    async def test_degenerate_falls_through_after_limit(self, mock_backend: MockBackend) -> None:
+        """After backoff_iterations consecutive degenerate nudges, falls through to classifier."""
+        from llm_saia.core.controller import (
+            ActionKind,
+            ControllerConfig,
+            DefaultController,
+            Observation,
+        )
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        ctrl_config = ControllerConfig(llm_config=config, backoff_iterations=2)
+        controller = DefaultController(config=ctrl_config)
+        controller.reset()
+
+        def make_obs(iteration: int) -> Observation:
+            return Observation(
+                response=AgentResponse(content="", tool_calls=[], output_tokens=0),
+                messages=[],
+                iteration=iteration,
+                task="do something",
+                tool_names=["search"],
+                terminal_tool=None,
+            )
+
+        # First 2 degenerate responses → nudge (within limit)
+        a1 = await controller.decide(make_obs(1))
+        assert a1.kind == ActionKind.INSTRUCT
+        assert a1.reason == "empty_response"
+
+        a2 = await controller.decide(make_obs(2))
+        assert a2.kind == ActionKind.INSTRUCT
+        assert a2.reason == "empty_response"
+
+        # 3rd consecutive → exceeds backoff_iterations=2, falls through to classifier.
+        # Classifier returns WANTS_CONTINUE (default mock), and since the last nudge
+        # was on iteration 2, backoff window still active → SKIP.
+        a3 = await controller.decide(make_obs(3))
+        assert a3.kind == ActionKind.SKIP
+        assert "backoff" in a3.reason
+
+    async def test_degenerate_counter_resets_on_tool_calls(self, mock_backend: MockBackend) -> None:
+        """Consecutive degenerate counter resets when LLM makes real tool calls."""
+        from llm_saia.core.controller import (
+            ActionKind,
+            ControllerConfig,
+            DefaultController,
+            Observation,
+        )
+
+        config = Config(backend=mock_backend, tools=[], executor=None, system=None)
+        ctrl_config = ControllerConfig(llm_config=config, backoff_iterations=1)
+        controller = DefaultController(config=ctrl_config)
+        controller.reset()
+
+        # 1 degenerate nudge (at the limit)
+        obs_empty = Observation(
+            response=AgentResponse(content="", tool_calls=[], output_tokens=0),
+            messages=[],
+            iteration=1,
+            task="do something",
+            tool_names=["search"],
+            terminal_tool=None,
+        )
+        a1 = await controller.decide(obs_empty)
+        assert a1.kind == ActionKind.INSTRUCT
+        assert a1.reason == "empty_response"
+
+        # LLM recovers — makes a tool call
+        obs_tools = Observation(
+            response=AgentResponse(
+                content="",
+                tool_calls=[ToolCall(id="c1", name="search", arguments={})],
+                output_tokens=5,
+            ),
+            messages=[],
+            iteration=2,
+            task="do something",
+            tool_names=["search"],
+            terminal_tool=None,
+        )
+        a2 = await controller.decide(obs_tools)
+        assert a2.kind == ActionKind.EXECUTE_TOOLS
+
+        # Another degenerate — counter was reset, so should nudge again (not fall through)
+        obs_empty2 = Observation(
+            response=AgentResponse(content="", tool_calls=[], output_tokens=0),
+            messages=[],
+            iteration=3,
+            task="do something",
+            tool_names=["search"],
+            terminal_tool=None,
+        )
+        a3 = await controller.decide(obs_empty2)
+        assert a3.kind == ActionKind.INSTRUCT
+        assert a3.reason == "empty_response"
+
 
 class TestTaskStateClassifier:
     """Tests for TaskStateClassifier."""
