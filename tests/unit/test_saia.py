@@ -145,3 +145,51 @@ class TestSAIA:
         result = saia.recall("nonexistent")
 
         assert result == []
+
+    def test_compose_simple(self, mock_backend: MockBackend) -> None:
+        """Test basic composition with multiple layers."""
+        saia = make_saia(mock_backend)
+
+        result = saia.compose("You are helpful", "Context here", "Do this task")
+
+        assert result == "You are helpful\n\nContext here\n\nDo this task"
+
+    def test_compose_filters_none(self, mock_backend: MockBackend) -> None:
+        """Test that None values are filtered out."""
+        saia = make_saia(mock_backend)
+
+        result = saia.compose("Identity", None, "Task")
+
+        assert result == "Identity\n\nTask"
+
+    def test_compose_filters_empty(self, mock_backend: MockBackend) -> None:
+        """Test that empty strings are filtered out."""
+        saia = make_saia(mock_backend)
+
+        result = saia.compose("Identity", "", "Task")
+
+        assert result == "Identity\n\nTask"
+
+    def test_compose_custom_separator(self, mock_backend: MockBackend) -> None:
+        """Test composition with custom separator."""
+        saia = make_saia(mock_backend)
+
+        result = saia.compose("Step 1", "Step 2", "Step 3", separator=" -> ")
+
+        assert result == "Step 1 -> Step 2 -> Step 3"
+
+    def test_compose_all_empty(self, mock_backend: MockBackend) -> None:
+        """Test composition when all layers are empty."""
+        saia = make_saia(mock_backend)
+
+        result = saia.compose(None, "", None)
+
+        assert result == ""
+
+    def test_compose_single_layer(self, mock_backend: MockBackend) -> None:
+        """Test composition with a single layer."""
+        saia = make_saia(mock_backend)
+
+        result = saia.compose("Single layer")
+
+        assert result == "Single layer"
