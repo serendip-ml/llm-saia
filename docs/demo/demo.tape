@@ -8,8 +8,9 @@ Set Width 800
 Set Height 300
 Set Theme "Dracula"
 Set Padding 10
+Set PlaybackSpeed 1.3
 
 Type "./examples/investigate.py 'Water boils at 100 degrees Celsius'"
-Sleep 500ms
+Sleep 650ms
 Enter
-Sleep 20s
+Sleep 25s

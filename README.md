@@ -2,9 +2,12 @@
 
 **Framework-agnostic verb vocabulary for LLM agents**
 
+![Python](https://img.shields.io/badge/python-3.11+-blue.svg)
+![Coverage](https://img.shields.io/badge/coverage-91%25-brightgreen.svg)
+[![Typed](https://img.shields.io/badge/typed-PEP%20561-brightgreen.svg)](https://peps.python.org/pep-0561/)
+[![Linting: Ruff](https://img.shields.io/badge/linting-ruff-brightgreen)](https://github.com/astral-sh/ruff)
 [![CI](https://github.com/serendip-ml/llm-saia/actions/workflows/ci.yml/badge.svg)](https://github.com/serendip-ml/llm-saia/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue)](https://www.python.org/downloads/)
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
 
 SAIA provides a fixed vocabulary of semantic verbs for LLM interactions. Instead of writing raw
 prompts, you express intent through verbs like `ask`, `verify`, `critique`, and `refine`.
@@ -31,6 +34,9 @@ It's `requests` vs `urllib` - both work, one is cleaner.
 
 SAIA's value compounds when combining verbs, switching backends, or building a team around
 consistent patterns.
+
+**"Is this novel?"** Perhaps not. These are the patterns that emerge when you build LLM agents that
+need to actually work. SAIA extracts them into ~2500 lines anyone can use, inspect, and build on.
 
 ## Installation
 
