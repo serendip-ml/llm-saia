@@ -4,9 +4,10 @@ You tell the LLM "verify this claim and explain why." It returns prose. Now you'
 hoping it followed your format. SAIA gives you `verify()` - it returns `{passed: bool, reason:
 str}`.
 
-In 1987, SCUMM reduced adventure games to 9 verbs: Open, Close, Push, Pull, Give, Pick up, Look at,
-Talk to, Use. Every puzzle in Monkey Island was built from these primitives. The constraints didn't
-limit the games - they enabled them. Designers knew exactly what players could do.
+SCUMM (1987) reduced adventure games to a fixed set of verbs. The original Monkey Island used 12;
+later releases refined this to 9: Open, Close, Push, Pull, Give, Pick up, Look at, Talk to, Use.
+Every puzzle was built from these primitives. The constraints didn't limit the games - they enabled
+them. Designers knew exactly what players could do.
 
 SAIA applies the same idea to LLM agents. `verify()` returns pass/fail with reason. `critique()`
 returns weaknesses. `decompose()` returns subtasks. The structure follows from the operation.
@@ -68,7 +69,7 @@ either nudges back on track or terminates via a designated tool. Agents that act
 
 ## What You Get
 
-- **Zero dependencies** - pure Python core, bring your own LLM client
+- **Zero runtime dependencies** - pure Python core, bring your own LLM client
 - **Swap backends freely** - Anthropic, OpenAI, Ollama, vLLM with one line change
 - **~2500 lines total** - easy to understand, minimal structures, fork it if you want
 - **No lock-in** - use inside any orchestrator, any framework

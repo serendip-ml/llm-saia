@@ -66,7 +66,10 @@ async def execute_tool(name: str, args: dict[str, Any]) -> str:
         path = Path(args["path"])
         if not path.exists():
             return f"Error: {path} not found"
-        return path.read_text()[:4000]
+        try:
+            return path.read_text()[:4000]
+        except (PermissionError, UnicodeDecodeError, OSError) as e:
+            return f"Error reading {path}: {e}"
     return f"Unknown tool: {name}"
 
 

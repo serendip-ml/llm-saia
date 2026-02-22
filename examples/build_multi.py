@@ -12,7 +12,7 @@ This example demonstrates SAIA's power for multi-model orchestration:
 The whole orchestration is ~50 lines of readable code.
 
 Local LLM (cheap): decompose, instruct, refine
-Smart LLM (quality): verify, critique, synthesize
+Smart LLM (quality): verify, critique, ask
 
 Usage:
     # Local OpenAI + Smart Anthropic
@@ -113,14 +113,14 @@ async def main() -> None:  # cq: exempt
             smart = SAIA.builder().backend(smart_backend).build()
 
             # 1. Decompose (local)
-            print("[decompose] breaking down task...")
+            print(f"{C.CYAN}[decompose]{C.RESET} breaking down task...")
             subtasks = await local.decompose(TASK)
-            print(f"[decompose] {len(subtasks)} subtasks")
+            print(f"{C.CYAN}[decompose]{C.RESET} {len(subtasks)} subtasks")
             for t in subtasks:
                 print(f"  - {t[:60]}")
 
             # 2. Instruct each (local)
-            print("\n[instruct] generating code...")
+            print(f"\n{C.GREEN}[instruct]{C.RESET} generating code...")
             parts = []
             for i, t in enumerate(subtasks):
                 print(f"  [{i + 1}/{len(subtasks)}] {t[:50]}...", end=" ", flush=True)
@@ -128,7 +128,7 @@ async def main() -> None:  # cq: exempt
                 print("done")
 
             # 3. Verify each (smart)
-            print("\n[verify] checking code quality...")
+            print(f"\n{C.YELLOW}[verify]{C.RESET} checking code quality...")
             for i, code in enumerate(parts):
                 print(f"  [{i + 1}/{len(parts)}] verifying...", end=" ", flush=True)
                 result = await smart.verify(code, "valid Python, handles errors")
@@ -137,23 +137,23 @@ async def main() -> None:  # cq: exempt
 
                 # 4. Critique failures (smart)
                 if not result.passed:
-                    print("  [critique]...", end=" ", flush=True)
+                    print(f"  {C.YELLOW}[critique]{C.RESET}...", end=" ", flush=True)
                     critique = await smart.critique(code)
                     print(f"{len(critique.weaknesses)} issues")
 
                     # 5. Refine (local)
-                    print("  [refine]...", end=" ", flush=True)
+                    print(f"  {C.GREEN}[refine]{C.RESET}...", end=" ", flush=True)
                     feedback = "\n".join(critique.weaknesses)
                     parts[i] = await local.refine(code, feedback)
                     print("improved")
 
             # 6. Combine (smart) - using ask() to merge code parts
-            print("\n[ask] combining into final script...")
+            print(f"\n{C.MAGENTA}[ask]{C.RESET} combining into final script...")
             final = await smart.ask(
                 "Combine into one script:\n" + "\n---\n".join(parts),
                 "Output only working Python code",
             )
-            print(f"\n[ask]\n{final}")
+            print(f"\n{C.MAGENTA}[ask]{C.RESET}\n{final}")
 
 
 if __name__ == "__main__":
