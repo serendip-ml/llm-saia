@@ -14,12 +14,22 @@ The whole orchestration is ~50 lines of readable code.
 Local LLM (cheap): decompose, instruct, refine
 Smart LLM (quality): verify, critique, ask
 
+Environment variables:
+    LOCAL_URL     - Local LLM endpoint (default: http://localhost:8000/v1)
+    LOCAL_MODEL   - Model name for local LLM (optional)
+    SMART_BACKEND - "anthropic" or "openai" (default: openai)
+    SMART_URL     - Smart LLM endpoint when using openai backend
+    SMART_MODEL   - Model name for smart LLM (optional)
+
 Usage:
     # Local OpenAI + Smart Anthropic
     LOCAL_URL=http://localhost:18000/v1 SMART_BACKEND=anthropic ./build_multi.py
 
     # Both local
     LOCAL_URL=http://localhost:18000/v1 SMART_URL=http://localhost:18000/v1 ./build_multi.py
+
+    # Custom models
+    LOCAL_MODEL=llama3 SMART_MODEL=claude-3-opus-20240229 SMART_BACKEND=anthropic ./build_multi.py
 
 Example output:
     Local: http://localhost:18000/v1 | Smart: anthropic
@@ -141,11 +151,14 @@ async def main() -> None:  # cq: exempt
                     critique = await smart.critique(code)
                     print(f"{len(critique.weaknesses)} issues")
 
-                    # 5. Refine (local)
-                    print(f"  {C.GREEN}[refine]{C.RESET}...", end=" ", flush=True)
-                    feedback = "\n".join(critique.weaknesses)
-                    parts[i] = await local.refine(code, feedback)
-                    print("improved")
+                    # 5. Refine (local) - only if there are weaknesses
+                    if critique.weaknesses:
+                        print(f"  {C.GREEN}[refine]{C.RESET}...", end=" ", flush=True)
+                        feedback = "\n".join(critique.weaknesses)
+                        parts[i] = await local.refine(code, feedback)
+                        print("improved")
+                    else:
+                        print(f"  {C.GREEN}[refine]{C.RESET}... skipped (no issues)")
 
             # 6. Combine (smart) - using ask() to merge code parts
             print(f"\n{C.MAGENTA}[ask]{C.RESET} combining into final script...")

@@ -79,6 +79,10 @@ async def main() -> None:  # cq: exempt
     parser.add_argument("--trace", action="store_true", help="Show trace output")
     args = parser.parse_args()
 
+    # --full implies --trace
+    if args.full:
+        args.trace = True
+
     async with get_backend() as backend:
         builder = (
             SAIA.builder()
