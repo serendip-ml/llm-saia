@@ -33,6 +33,9 @@ class Synthesize(Verb):
         Returns:
             Structured output if schema provided, otherwise string.
         """
+        if schema is not None and goal is not None:
+            raise ValueError("Provide exactly one of schema or goal, not both")
+
         arts = "\n---\n".join(str(a) for a in artifacts)
 
         if goal is not None:

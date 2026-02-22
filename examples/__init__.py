@@ -223,7 +223,7 @@ class OpenAIBackend(Backend):
         api_key: str | None = None,
         base_url: str | None = None,
     ):
-        self._model = model or os.environ.get("LLM_MODEL", "default")
+        self._model = model or os.environ.get("LLM_MODEL", "gpt-4o-mini")
         self._api_key = api_key or os.environ.get("OPENAI_API_KEY")
         self._base_url = base_url or os.environ.get("LLM_BASE_URL", "http://localhost:8000/v1")
         self._client = httpx.AsyncClient(timeout=60.0)
@@ -401,7 +401,7 @@ async def get_backend(model: str | None = None) -> AsyncGenerator[Backend, None]
     Usage:
         # Default (OpenAI-compatible, local LLM)
         async with get_backend() as backend:
-            saia = SAIA(backend=backend)
+            saia = SAIA.builder().backend(backend).build()
 
         # Use Anthropic (Haiku is default)
         LLM_BACKEND=anthropic python example.py

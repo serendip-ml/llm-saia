@@ -15,6 +15,8 @@ returns weaknesses. `decompose()` returns subtasks. The structure follows from t
 
 ![SAIA demo](./demo/demo.gif)
 
+In practice:
+
 ```python
 saia = SAIA.builder().backend(backend).build()
 

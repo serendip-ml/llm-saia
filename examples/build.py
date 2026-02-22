@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build an app: decompose → instruct → synthesize
+"""Build an app: decompose → instruct → ask (combine)
 
 Usage:
     LLM_BACKEND=anthropic ./build.py
@@ -17,7 +17,7 @@ Example output:
       ✓ Create conversion functions for kg/pounds
       ✓ Create a main function with user interface
 
-    [synthesize]
+    [ask]
     ```python
     def km_to_miles(km): return km * 0.621371
     def miles_to_km(miles): return miles / 0.621371
@@ -61,7 +61,7 @@ async def main() -> None:
             "Combine into one script:\n\n" + "\n---\n".join(parts),
             "Output only working Python code",
         )
-        print(f"\n{C.MAGENTA}[synthesize]{C.RESET}\n{final}")
+        print(f"\n{C.MAGENTA}[ask]{C.RESET}\n{final}")
 
 
 if __name__ == "__main__":

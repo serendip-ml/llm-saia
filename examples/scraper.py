@@ -19,7 +19,10 @@ Example output:
 
     [synthesize] combining into working scraper...
 
-    [saved] ./examples/scraper_output.py
+    [output]
+    import httpx
+    from bs4 import BeautifulSoup
+    ...
 """
 
 import asyncio
@@ -59,10 +62,8 @@ async def main() -> None:
             results, goal="single working Python script, raw code without markdown fences"
         )
 
-        # Save to file
-        outfile = Path(__file__).parent / "scraper_output.py"
-        outfile.write_text(output)
-        print(f"\n{C.GREEN}[saved]{C.RESET} {outfile}")
+        # Print the output (writing to file would create untracked repo files)
+        print(f"\n{C.GREEN}[output]{C.RESET}\n{output}")
 
 
 if __name__ == "__main__":

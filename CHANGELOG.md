@@ -36,10 +36,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - PEP 561 `py.typed` marker for type checker support
 - Examples: `investigate.py`, `build.py`, `build_multi.py`, `agent.py`, `analyze.py`
 
-### Technical
+### Changed
 - Python 3.11+ required
 - mypy strict mode compliance
-- 91% test coverage
+- 93% test coverage
 - CI/CD with GitHub Actions (lint, test, coverage, release)
 
 [Unreleased]: https://github.com/serendip-ml/llm-saia/commits/main

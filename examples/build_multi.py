@@ -5,7 +5,7 @@ This example demonstrates SAIA's power for multi-model orchestration:
 
 - Cost optimization: cheap local model does bulk generation, expensive model only for quality
 - Full verb vocabulary: 6 verbs in one workflow (decompose → instruct → verify → critique →
-  refine → synthesize)
+  refine → ask)
 - Feedback loop: verify fails → critique finds issues → refine improves
 - Real collaboration: models with different strengths working together
 
@@ -48,8 +48,8 @@ Example output:
       [refine]... improved
       [4/4] verifying... ✓ The artifact is valid Python code
 
-    [synthesize] combining into final script...
-    [synthesize]
+    [ask] combining into final script...
+    [ask]
     ```python
     def convert_distance(value, from_unit, to_unit):
         ...
@@ -147,13 +147,13 @@ async def main() -> None:  # cq: exempt
                     parts[i] = await local.refine(code, feedback)
                     print("improved")
 
-            # 6. Synthesize (smart)
-            print("\n[synthesize] combining into final script...")
+            # 6. Combine (smart) - using ask() to merge code parts
+            print("\n[ask] combining into final script...")
             final = await smart.ask(
                 "Combine into one script:\n" + "\n---\n".join(parts),
                 "Output only working Python code",
             )
-            print(f"\n[synthesize]\n{final}")
+            print(f"\n[ask]\n{final}")
 
 
 if __name__ == "__main__":

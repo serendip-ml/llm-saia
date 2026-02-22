@@ -17,9 +17,8 @@ Example output:
 
     [0] read_file(path=./examples/analyze.py)
     [1] done(summary=This file is a Python example demonstrating...)
-    [2] done(summary=This file is a Python example demonstrating...)
 
-    [done] iterations: 3
+    [done] iterations: 2
 
     This file is a Python example demonstrating an agentic tool loop using the
     SAIA framework. It shows how to define tools (read_file, done), configure

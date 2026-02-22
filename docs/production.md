@@ -230,7 +230,7 @@ import asyncio
 
 shutdown_event = asyncio.Event()
 
-def handle_signal(sig):
+def handle_signal(signum, frame):
     shutdown_event.set()
 
 async def main():

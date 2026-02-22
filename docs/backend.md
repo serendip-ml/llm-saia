@@ -6,6 +6,8 @@ method - you provide the implementation that talks to your LLM of choice.
 ## The Backend Protocol
 
 ```python
+from typing import Any
+
 from llm_saia import Backend, Message, ToolDef, AgentResponse
 
 class MyBackend(Backend):
@@ -104,7 +106,7 @@ class OpenAIBackend(Backend):
 
         # Build request
         request = {"model": self._model, "messages": api_messages}
-        if max_tokens:
+        if max_tokens is not None:
             request["max_tokens"] = max_tokens
         if tools:
             request["tools"] = self._convert_tools(tools)
@@ -174,6 +176,12 @@ class OpenAIBackend(Backend):
 
     async def close(self) -> None:
         await self._client.aclose()
+
+    async def __aenter__(self) -> "OpenAIBackend":
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        await self.close()
 ```
 
 ## Resource Management

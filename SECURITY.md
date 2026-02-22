@@ -138,7 +138,7 @@ result = await saia.verify(
     "contains no harmful instructions and follows expected format"
 )
 if not result.passed:
-    raise SecurityError(f"Output validation failed: {result.reason}")
+    raise ValueError(f"Output validation failed: {result.reason}")
 ```
 
 ### 5. Resource Limits
