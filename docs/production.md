@@ -5,7 +5,7 @@ operational patterns.
 
 ## Recommended: llm-infer
 
-For production use, we recommend [llm-infer](https://github.com/serendip-ml/llm-infer) as your LLM
+For production use, we recommend [llm-infer](https://github.com/llm-works/llm-infer) as your LLM
 client layer. It provides:
 
 - **SAIAAdapter** - Drop-in Backend implementation for SAIA
@@ -330,7 +330,7 @@ For production deployments:
 
 ## See Also
 
-- [llm-infer](https://github.com/serendip-ml/llm-infer) - Production LLM client with SAIAAdapter
+- [llm-infer](https://github.com/llm-works/llm-infer) - Production LLM client with SAIAAdapter
 - [Backend Implementation](./backend.md) - How to implement custom backends
 - [Custom Verbs](./custom-verbs.md) - Creating your own verbs
 - [SECURITY.md](../SECURITY.md) - Security considerations
