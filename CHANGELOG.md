@@ -43,7 +43,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Memory verbs: `store` and `recall` for session-scoped memory
 - `complete()` verb for tool-calling loops with terminal detection
 - Builder pattern configuration via `SAIA.builder()`
-- Runtime modifiers: `with_single_call()`, `with_max_iterations()`, `with_timeout()`,
+- Runtime modifiers: `with_single_call()`, `with_max_iterations()`, `with_timeout_secs()`,
   `with_request_id()`
 - Protocol-based `Backend` abstraction for LLM providers
 - Structured output parsing with dataclass schemas

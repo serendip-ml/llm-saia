@@ -183,7 +183,7 @@ def make_saia(
 ) -> SAIA:
     """Helper to create SAIA instances for tests."""
     terminal = TerminalConfig(tool=terminal_tool) if terminal_tool else None
-    call = CallOptions(system=system) if system else None
+    call = CallOptions(system=system) if system is not None else None
     config = Config(
         backend=backend,
         tools=tools or [],

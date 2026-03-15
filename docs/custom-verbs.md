@@ -184,7 +184,7 @@ Key properties:
 - `self._lg` - Logger (or None)
 - `self._config.tools` - Tool definitions
 - `self._config.executor` - Tool executor function
-- `self._config.system` - System prompt
+- `self._config.call.system` - System prompt (per-call override)
 - `self._config.tracer` - Tracer for observability
 
 ## Registering with SAIA

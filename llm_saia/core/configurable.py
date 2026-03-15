@@ -71,14 +71,14 @@ class Configurable(ABC):
         """Return new instance with retry settings."""
         return self._with_call(max_retries=max_retries, retry_escalation=escalation)
 
-    def with_temperature(self, temp: float) -> Self:
-        """Return new instance with specified sampling temperature."""
+    def with_temperature(self, temp: float | None) -> Self:
+        """Return new instance with specified sampling temperature (None to clear)."""
         return self._with_call(temperature=temp)
 
-    def with_request_id(self, request_id: str) -> Self:
-        """Return new instance with a user-provided correlation ID."""
+    def with_request_id(self, request_id: str | None) -> Self:
+        """Return new instance with a user-provided correlation ID (None to clear)."""
         return self._with_call(request_id=request_id)
 
-    def with_system(self, system: str) -> Self:
-        """Return new instance with different system prompt."""
+    def with_system(self, system: str | None) -> Self:
+        """Return new instance with different system prompt (None to clear)."""
         return self._with_call(system=system)

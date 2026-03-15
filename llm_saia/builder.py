@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING, Any
 
 from llm_saia.core import trace
 from llm_saia.core.backend import Backend, ToolDef
-from llm_saia.core.config import CallOptions, Config, TerminalConfig
+from llm_saia.core.config import DEFAULT_CALL, CallOptions, Config, TerminalConfig
 from llm_saia.core.logger import Logger
 
 if TYPE_CHECKING:
@@ -35,16 +35,16 @@ class SAIABuilder:
         self._lg: Logger | None = None
         self._warn_tool_support: bool = True
         self._tracer: trace.Tracer | None = None
-        # CallOptions fields (defaults match CallOptions)
-        self._system: str | None = None
-        self._temperature: float | None = None
-        self._max_iterations: int = 3
-        self._max_call_tokens: int = 0
-        self._max_total_tokens: int = 0
-        self._timeout_secs: float = 0
-        self._max_retries: int = 1
-        self._retry_escalation: str | None = None
-        self._request_id: str | None = None
+        # CallOptions fields (from DEFAULT_CALL)
+        self._system: str | None = DEFAULT_CALL.system
+        self._temperature: float | None = DEFAULT_CALL.temperature
+        self._max_iterations: int = DEFAULT_CALL.max_iterations
+        self._max_call_tokens: int = DEFAULT_CALL.max_call_tokens
+        self._max_total_tokens: int = DEFAULT_CALL.max_total_tokens
+        self._timeout_secs: float = DEFAULT_CALL.timeout_secs
+        self._max_retries: int = DEFAULT_CALL.max_retries
+        self._retry_escalation: str | None = DEFAULT_CALL.retry_escalation
+        self._request_id: str | None = DEFAULT_CALL.request_id
 
     def backend(self, backend: Backend) -> SAIABuilder:
         """Set the LLM backend (required)."""

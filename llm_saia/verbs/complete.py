@@ -36,7 +36,7 @@ class _LoopCtx:
     ctrl: LoopController
     tracer: Tracer | None
     on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None
-    run_config: CallOptions
+    call_options: CallOptions
     messages: list[Message]
     tool_names: list[str]
     acc: list[int] = field(default_factory=lambda: [0, 0, 0, 0])
@@ -110,21 +110,21 @@ class Complete(Verb):
         on_iteration: Callable[[int, AgentResponse], Awaitable[None]] | None,
     ) -> TaskResult:
         """Execute the main tool-calling loop."""
-        run_config = self._config.call or DEFAULT_COMPLETE_CALL
+        call_options = self._config.call or DEFAULT_COMPLETE_CALL
         ctx = _LoopCtx(
             task=task,
             trace_id=trace_id,
             ctrl=ctrl,
             tracer=tracer,
             on_iteration=on_iteration,
-            run_config=run_config,
+            call_options=call_options,
             messages=[Message(role="user", content=task)],
             tool_names=[t.name for t in (self._config.tools or [])],
         )
-        self._log_loop_start(run_config)
+        self._log_loop_start(call_options)
         start_time, iteration, total_tokens, last_content = time.monotonic(), 0, 0, ""
 
-        while not self._should_stop(run_config, iteration, start_time, total_tokens):
+        while not self._should_stop(call_options, iteration, start_time, total_tokens):
             result, tokens, last_content = await self._run_one_iteration(ctx, iteration)
             total_tokens += tokens
             if result:
@@ -133,7 +133,7 @@ class Complete(Verb):
                 return result
             iteration += 1
 
-        self._log_limit_reached(run_config, iteration, start_time, total_tokens)
+        self._log_limit_reached(call_options, iteration, start_time, total_tokens)
         result = TaskResult(False, last_content, iteration, ctx.messages)
         result.score = self._build_score(iteration, total_tokens, ctx.acc)
         return result
@@ -144,7 +144,7 @@ class Complete(Verb):
         iteration: int,
     ) -> tuple[TaskResult | None, int, str]:
         """Run one loop iteration. Returns (result, tokens, last_content)."""
-        response, tokens = await self._run_iteration(ctx.messages, ctx.run_config)
+        response, tokens = await self._run_iteration(ctx.messages, ctx.call_options)
         self._log_response(response, iteration, tokens)
         action, result = await self._process_iteration(
             response,
